@@ -1,0 +1,6 @@
+#!/bin/sh
+# nanopb's generator is Python; run it (and the protoc-gen-nanopb plugin it
+# spawns via `env python3`) with the project venv from tools/setup-host.sh.
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+export PATH="$ROOT/.venv/bin:$PATH"
+exec "$ROOT/.venv/bin/python3" "$ROOT/third_party/cspot/cspot/bell/external/nanopb/generator/protoc" "$@"

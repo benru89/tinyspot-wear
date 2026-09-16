@@ -1,0 +1,7 @@
+.gradle/
+build/
+build-ndk/
+app/.cxx/
+.venv/
+local.properties
+*.apk

@@ -1,0 +1,60 @@
+plugins {
+    id 'com.android.application'
+}
+
+def abiList = (project.findProperty('tinyspot.abis') ?: 'armeabi-v7a').split(',')*.trim()
+
+android {
+    namespace 'com.rubfer.tinyspot'
+    compileSdk 34
+    ndkVersion '28.2.13676358'
+
+    defaultConfig {
+        applicationId 'com.rubfer.tinyspot'
+        minSdk 25          // Wear OS 2 floor (Android 7.1.1)
+        targetSdk 28       // watch runs Android 9; avoids API 34 FGS-type rules
+        versionCode 1
+        versionName '0.1'
+
+        ndk {
+            abiFilters(*abiList)
+        }
+        externalNativeBuild {
+            cmake {
+                arguments '-DANDROID_STL=c++_static'
+            }
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path file('../CMakeLists.txt')
+            version '3.31.6'
+        }
+    }
+
+    buildTypes {
+        debug {
+            externalNativeBuild { cmake { arguments '-DCMAKE_BUILD_TYPE=Debug' } }
+        }
+        release {
+            minifyEnabled true
+            shrinkResources true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            // Sideload build: sign with the debug key until a real key exists.
+            signingConfig signingConfigs.debug
+            externalNativeBuild { cmake { arguments '-DCMAKE_BUILD_TYPE=MinSizeRel' } }
+        }
+    }
+
+    packagingOptions {
+        jniLibs { useLegacyPackaging false }   // .so stays uncompressed, mmap'd from the APK
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+
+    lint { abortOnError false }
+}

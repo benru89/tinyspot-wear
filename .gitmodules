@@ -1,0 +1,6 @@
+[submodule "third_party/cspot"]
+	path = third_party/cspot
+	url = https://github.com/feelfreelinux/cspot.git
+[submodule "third_party/mbedtls"]
+	path = third_party/mbedtls
+	url = https://github.com/Mbed-TLS/mbedtls.git
