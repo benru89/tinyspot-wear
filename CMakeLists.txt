@@ -6,6 +6,22 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 set(TP ${CMAKE_CURRENT_SOURCE_DIR}/third_party)
 
+# Local fixes to pinned third-party code live in patches/<submodule>/*.patch and
+# are applied once (a reverse-apply check makes this idempotent).
+file(GLOB CSPOT_PATCHES ${CMAKE_CURRENT_SOURCE_DIR}/patches/cspot/*.patch)
+list(SORT CSPOT_PATCHES)
+foreach(p ${CSPOT_PATCHES})
+  execute_process(COMMAND git apply --reverse --check ${p}
+                  WORKING_DIRECTORY ${TP}/cspot RESULT_VARIABLE already OUTPUT_QUIET ERROR_QUIET)
+  if(NOT already EQUAL 0)
+    execute_process(COMMAND git apply ${p} WORKING_DIRECTORY ${TP}/cspot RESULT_VARIABLE rc)
+    if(NOT rc EQUAL 0)
+      message(FATAL_ERROR "failed to apply ${p}")
+    endif()
+    message(STATUS "applied ${p}")
+  endif()
+endforeach()
+
 # ---------------------------------------------------------------------------
 # Size-first compiler flags (release). -ffunction/data-sections + --gc-sections
 # drop everything bell/cspot compile but we never call.
@@ -49,7 +65,10 @@ add_subdirectory(${TP}/cspot/cspot ${CMAKE_BINARY_DIR}/cspot EXCLUDE_FROM_ALL)
 # ---------------------------------------------------------------------------
 add_library(tinyspot SHARED
   native/jni_bridge.cpp
+  native/CspotPlayer.cpp
+  native/AndroidAudioSink.cpp
 )
 target_include_directories(tinyspot PRIVATE native)
+target_compile_options(tinyspot PRIVATE -Wall -Wextra -Wno-unused-parameter)
 target_link_libraries(tinyspot PRIVATE cspot log OpenSLES)
 target_link_options(tinyspot PRIVATE -Wl,--gc-sections -Wl,--exclude-libs,ALL)
