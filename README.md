@@ -21,14 +21,6 @@ Working on the watch:
 
 ## To do
 
-Unverified, in the order that matters:
-
-1. **Requirement tests on the watch** — Bluetooth headset buttons and
-   pause-on-disconnect (written, never tested with real headphones); playing
-   with the phone off; playing on LTE; Wi-Fi <-> LTE handover mid-track. The
-   code for all of these exists; none of it is proven.
-2. **Battery over a longer session.** Measured ~11.5 %/h over 36 min on Wi-Fi
-   with the screen off (see above); LTE and Bluetooth output will cost more.
 3. **Credential lifetime.** The requirement is weeks. Reusable credentials
    normally last until the password changes, but that is unproven here.
 
