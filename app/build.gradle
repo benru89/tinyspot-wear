@@ -16,6 +16,11 @@ android {
         versionCode 1
         versionName '0.1'
 
+        // -Ptinyspot.testhooks=true enables the adb play/cmd intents in a
+        // release build, for measuring the real (optimized) player.
+        buildConfigField 'boolean', 'TEST_HOOKS',
+                (project.findProperty('tinyspot.testhooks') ?: 'false')
+
         ndk {
             abiFilters(*abiList)
         }

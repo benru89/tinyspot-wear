@@ -49,7 +49,7 @@ public class MainActivity extends Activity implements PlayerService.UiListener {
      * or --es cmd pause|resume|next|prev
      */
     private static void debugPlay(android.content.Intent intent) {
-        if (!BuildConfig.DEBUG) return;
+        if (!BuildConfig.DEBUG && !BuildConfig.TEST_HOOKS) return;
         String play = intent.getStringExtra("play");
         if (play != null) {
             NativePlayer.nativePlayContext(play, intent.getBooleanExtra("shuffle", false));
