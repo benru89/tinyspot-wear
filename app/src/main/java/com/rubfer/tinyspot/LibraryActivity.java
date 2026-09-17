@@ -4,7 +4,6 @@ import android.app.Activity;
 import android.os.Bundle;
 import android.view.View;
 import android.widget.ArrayAdapter;
-import android.widget.CheckBox;
 import android.widget.ListView;
 import android.widget.TextView;
 
@@ -16,19 +15,17 @@ public class LibraryActivity extends Activity implements PlayerService.UiListene
     private final List<String> uris = new ArrayList<>();
     private ArrayAdapter<String> adapter;
     private TextView status;
-    private CheckBox shuffle;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_library);
         status = findViewById(R.id.status);
-        shuffle = findViewById(R.id.shuffle);
         ListView list = findViewById(R.id.list);
         adapter = new ArrayAdapter<>(this, R.layout.item_library);
         list.setAdapter(adapter);
         list.setOnItemClickListener((parent, view, position, id) -> {
-            NativePlayer.nativePlayContext(uris.get(position), shuffle.isChecked());
+            NativePlayer.nativePlayContext(uris.get(position), PlayerService.shuffle());
             finish();
         });
     }

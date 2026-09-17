@@ -91,6 +91,7 @@ public class PlayerService extends Service implements NativePlayer.Listener {
         super.onCreate();
         startForeground(1, buildNotification());
         NativePlayer.setListener(this);
+        settings = getSharedPreferences("settings", MODE_PRIVATE);
         media = new MediaSessionManager(this);
         cm = (ConnectivityManager) getSystemService(CONNECTIVITY_SERVICE);
         nsd = (NsdManager) getSystemService(NSD_SERVICE);
@@ -207,6 +208,17 @@ public class PlayerService extends Service implements NativePlayer.Listener {
 
     private SharedPreferences prefs() {
         return getSharedPreferences("auth", MODE_PRIVATE);
+    }
+
+    private static SharedPreferences settings;
+
+    /** Shuffle is a playback mode, kept across restarts. */
+    static boolean shuffle() {
+        return settings == null || settings.getBoolean("shuffle", true);
+    }
+
+    static void setShuffle(boolean on) {
+        if (settings != null) settings.edit().putBoolean("shuffle", on).apply();
     }
 
     // ------------------------------------------------------------------

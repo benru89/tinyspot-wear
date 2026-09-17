@@ -6,16 +6,7 @@
     android:orientation="vertical"
     android:paddingLeft="24dp"
     android:paddingRight="24dp"
-    android:paddingTop="20dp">
-
-    <CheckBox
-        android:id="@+id/shuffle"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_gravity="center_horizontal"
-        android:checked="true"
-        android:text="Shuffle"
-        android:textColor="#FFFFFF" />
+    android:paddingTop="24dp">
 
     <TextView
         android:id="@+id/status"

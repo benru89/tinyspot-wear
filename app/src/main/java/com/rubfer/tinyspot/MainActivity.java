@@ -4,6 +4,7 @@ import android.app.Activity;
 import android.os.Bundle;
 import android.view.View;
 import android.widget.ImageButton;
+import android.widget.ToggleButton;
 import android.widget.TextView;
 
 public class MainActivity extends Activity implements PlayerService.UiListener {
@@ -15,6 +16,7 @@ public class MainActivity extends Activity implements PlayerService.UiListener {
     private TextView track;
     private TextView position;
     private ImageButton playPause;
+    private ToggleButton shuffle;
     private final android.os.Handler ticker = new android.os.Handler();
     private final Runnable tick = new Runnable() {
         @Override
@@ -33,6 +35,9 @@ public class MainActivity extends Activity implements PlayerService.UiListener {
         track = findViewById(R.id.track);
         position = findViewById(R.id.position);
         playPause = findViewById(R.id.play_pause);
+        shuffle = findViewById(R.id.shuffle);
+        shuffle.setChecked(PlayerService.shuffle());
+        shuffle.setOnCheckedChangeListener((v, on) -> PlayerService.setShuffle(on));
 
         findViewById(R.id.library).setOnClickListener(
                 v -> startActivity(new android.content.Intent(this, LibraryActivity.class)));
