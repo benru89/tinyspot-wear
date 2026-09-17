@@ -27,8 +27,8 @@ Unverified, in the order that matters:
    pause-on-disconnect (written, never tested with real headphones); playing
    with the phone off; playing on LTE; Wi-Fi <-> LTE handover mid-track. The
    code for all of these exists; none of it is proven.
-2. **Battery over hours.** Idle dropped from 10.7 % to 0.1 % of a core, so the
-   older impressions are obsolete.
+2. **Battery over a longer session.** Measured ~11.5 %/h over 36 min on Wi-Fi
+   with the screen off (see above); LTE and Bluetooth output will cost more.
 3. **Credential lifetime.** The requirement is weeks. Reusable credentials
    normally last until the password changes, but that is unproven here.
 
@@ -61,6 +61,8 @@ Known rough edges:
 | Wake locks | none held by the app |
 | Audio | 44.1 kHz s16 stereo, 4096-frame OpenSL ES buffers (~11 wakeups/s), 15 s ring buffer with 1.5 s prefill |
 | Underruns | 0 in 5 min (was 41 in a comparable run with a 1 s buffer) |
+| Battery while playing | 26 % -> 19 % in 36 min, screen off, Wi-Fi = ~11.5 %/h, so roughly 8-9 h of playback per charge |
+| Continuous playback | 62/62 samples over 31 min, screen off, no interruption |
 | Playback with the screen off | survived 60/60 samples over 10 min |
 
 ## Architecture
@@ -148,6 +150,11 @@ adb logcat -v time TinySpot-Cspot:V TinySpot-Audio:V TinySpot-Java:V '*:S'
 
 Note: the watch's log buffer drops this app's lines under load; stream logcat
 to a file rather than using `logcat -d` after the fact.
+
+For measuring with the screen off (Wi-Fi and adb die with it), sample on the
+device and collect afterwards. Two traps: this watch's shell has **no `awk`**,
+and the shell user cannot read another app's `/proc/<pid>/stat` — use `top -b
+-n 1 -q -p <pid>` and `dumpsys` instead.
 
 ## License
 
