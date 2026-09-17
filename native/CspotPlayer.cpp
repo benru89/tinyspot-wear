@@ -15,6 +15,7 @@
 #include "CSpotContext.h"
 #include "LoginBlob.h"
 #include "SpotifyLibrary.h"
+#include "SpClient.h"
 #include "SpircHandler.h"
 #include "TrackPlayer.h"
 #include "civetweb.h"
@@ -192,11 +193,13 @@ void CspotPlayer::sessionLoop(std::shared_ptr<cspot::LoginBlob> blob) {
       std::lock_guard<std::mutex> lock(stateMutex);
       ctx = c;
       handler = h;
-      library = std::make_shared<SpotifyLibrary>(c);
+      library = std::make_shared<SpotifyLibrary>(std::make_shared<SpClient>(c));
+      username = c->config.username;
     }
     c->session->startTask();
     emit(Event::AUTH_STATE, 2);
     LOGI("Spotify Connect device '%s' online", deviceName.c_str());
+
 
 
     while (running) c->session->handlePacket();
@@ -311,7 +314,12 @@ void CspotPlayer::requestPlaylists() {
     emit(Event::PLAYLISTS, 0);
     return;
   }
-  lib->playlists([this](bool ok, SpotifyLibrary::Playlists list) {
+  std::string user;
+  {
+    std::lock_guard<std::mutex> lock(stateMutex);
+    user = username;
+  }
+  lib->playlists(user, [this](bool ok, SpotifyLibrary::Playlists list) {
     std::string text;
     for (auto& [uri, name] : list) {
       std::string clean = name;
@@ -346,7 +354,6 @@ void CspotPlayer::playContext(const std::string& uri, bool shuffle) {
       contextTracks = std::move(tracks);
       localContext = true;
     }
-    // Runs on the session thread; loading only queues work, it doesn't block.
     loadWindow(0);
   });
 }

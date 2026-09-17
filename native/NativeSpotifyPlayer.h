@@ -16,7 +16,7 @@ enum class Event : int {
   POSITION = 5,        // arg1: position ms at the moment of the event
   VOLUME = 6,          // arg1: 0..65535
   ERROR = 7,           // text: message
-  PLAYLISTS = 8,       // text: "uri\tname\n" per playlist; arg1: 1 ok, 0 failed
+  PLAYLISTS = 8,       // text: "uri\tname\n" per playlist, Liked Songs first; arg1: 1 ok, 0 failed
 };
 
 class PlayerListener {
@@ -38,7 +38,7 @@ class NativeSpotifyPlayer {
 
   // Emits Event::PLAYLISTS.
   virtual void requestPlaylists() = 0;
-  // Resolves a playlist URI on the watch and starts playing it.
+  // Resolves a playlist / Liked Songs URI on the watch and starts playing it.
   virtual void playContext(const std::string& contextUri, bool shuffle) = 0;
 
   virtual void pause() = 0;

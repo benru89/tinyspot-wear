@@ -61,6 +61,7 @@ class CspotPlayer : public NativeSpotifyPlayer {
   std::shared_ptr<cspot::Context> ctx;
   std::shared_ptr<cspot::SpircHandler> handler;
   std::shared_ptr<class SpotifyLibrary> library;
+  std::string username;
 
   // Locally started context. cspot re-sends its whole queue in every Spirc
   // notify, so only a window of it is loaded at a time.

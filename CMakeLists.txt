@@ -6,28 +6,32 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 set(TP ${CMAKE_CURRENT_SOURCE_DIR}/third_party)
 
-# Local fixes to pinned third-party code live in patches/cspot/*.patch. They
+# Local fixes to pinned third-party code live in patches/<name>/*.patch. They
 # are applied in order once; applied names are recorded in a stamp file in the
-# submodule (patches that touch the same files can't be reverse-checked alone).
-file(GLOB CSPOT_PATCHES ${CMAKE_CURRENT_SOURCE_DIR}/patches/cspot/*.patch)
-list(SORT CSPOT_PATCHES)
-set(PATCH_STAMP ${TP}/cspot/.tinyspot-patches)
-set(APPLIED "")
-if(EXISTS ${PATCH_STAMP})
-  file(STRINGS ${PATCH_STAMP} APPLIED)
-endif()
-foreach(p ${CSPOT_PATCHES})
-  get_filename_component(name ${p} NAME)
-  if(NOT name IN_LIST APPLIED)
-    execute_process(COMMAND git apply --whitespace=nowarn ${p}
-                    WORKING_DIRECTORY ${TP}/cspot RESULT_VARIABLE rc)
-    if(NOT rc EQUAL 0)
-      message(FATAL_ERROR "failed to apply ${p}")
-    endif()
-    file(APPEND ${PATCH_STAMP} "${name}\n")
-    message(STATUS "applied ${name}")
+# target tree (patches that touch the same files can't be reverse-checked alone).
+function(apply_patches patch_dir target_dir)
+  file(GLOB patches ${patch_dir}/*.patch)
+  list(SORT patches)
+  set(stamp ${target_dir}/.tinyspot-patches)
+  set(applied "")
+  if(EXISTS ${stamp})
+    file(STRINGS ${stamp} applied)
   endif()
-endforeach()
+  foreach(p ${patches})
+    get_filename_component(name ${p} NAME)
+    if(NOT name IN_LIST applied)
+      execute_process(COMMAND git apply --whitespace=nowarn ${p}
+                      WORKING_DIRECTORY ${target_dir} RESULT_VARIABLE rc)
+      if(NOT rc EQUAL 0)
+        message(FATAL_ERROR "failed to apply ${p}")
+      endif()
+      file(APPEND ${stamp} "${name}\n")
+      message(STATUS "applied ${name}")
+    endif()
+  endforeach()
+endfunction()
+apply_patches(${CMAKE_CURRENT_SOURCE_DIR}/patches/cspot ${TP}/cspot)
+apply_patches(${CMAKE_CURRENT_SOURCE_DIR}/patches/bell ${TP}/cspot/cspot/bell)
 
 # ---------------------------------------------------------------------------
 # Size-first compiler flags (release). -ffunction/data-sections + --gc-sections
@@ -76,6 +80,7 @@ add_library(tinyspot SHARED
   native/CspotPlayer.cpp
   native/AndroidAudioSink.cpp
   native/SpotifyLibrary.cpp
+  native/SpClient.cpp
 )
 target_include_directories(tinyspot PRIVATE native)
 target_compile_options(tinyspot PRIVATE -Wall -Wextra -Wno-unused-parameter)

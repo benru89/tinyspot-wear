@@ -11,7 +11,7 @@ import android.widget.TextView;
 import java.util.ArrayList;
 import java.util.List;
 
-/** The account's playlists, fetched and played entirely on the watch. */
+/** Liked Songs + playlists, fetched and played entirely on the watch. */
 public class LibraryActivity extends Activity implements PlayerService.UiListener {
     private final List<String> uris = new ArrayList<>();
     private ArrayAdapter<String> adapter;

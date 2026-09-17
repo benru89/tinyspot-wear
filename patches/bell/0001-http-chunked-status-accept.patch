@@ -1,0 +1,100 @@
+diff --git a/main/io/HTTPClient.cpp b/main/io/HTTPClient.cpp
+index 9c607d6..6a1718f 100644
+--- a/main/io/HTTPClient.cpp
++++ b/main/io/HTTPClient.cpp
+@@ -1,5 +1,7 @@
+ #include "HTTPClient.h"
+ 
++#include <cstdlib>
++
+ #include <string.h>   // for memcpy
+ #include <algorithm>  // for transform
+ #include <cassert>    // for assert
+@@ -37,7 +39,18 @@ void HTTPClient::Response::rawRequest(const std::string& url,
+   socketStream << method << " " << urlParser.path << " HTTP/1.1" << reqEnd;
+   socketStream << "Host: " << urlParser.host << ":" << urlParser.port << reqEnd;
+   socketStream << "Connection: keep-alive" << reqEnd;
+-  socketStream << "Accept: */*" << reqEnd;
++  // Only default Accept when the caller sets none: a duplicate "*/*" makes
++  // clienttoken.spotify.com answer with an empty body.
++  bool hasAccept = false;
++  for (auto& header : headers) {
++    std::string name = header.first;
++    std::transform(name.begin(), name.end(), name.begin(),
++                   [](unsigned char c) { return std::tolower(c); });
++    hasAccept |= name == "accept";
++  }
++  if (!hasAccept) {
++    socketStream << "Accept: */*" << reqEnd;
++  }
+ 
+   // Write content
+   if (content.size() > 0) {
+@@ -112,6 +125,8 @@ void HTTPClient::Response::readResponseHeaders() {
+                                 phResponseHeaders[headerIndex].value_len)});
+   }
+ 
++  this->statusCode = status;
++
+   std::string contentLengthValue = std::string(header("content-length"));
+   if (contentLengthValue.size() > 0) {
+     this->hasContentSize = true;
+@@ -159,9 +174,36 @@ size_t HTTPClient::Response::totalLength() {
+ }
+ 
+ void HTTPClient::Response::readRawBody() {
+-  if (contentSize > 0 && rawBody.size() == 0) {
++  if (bodyRead) {
++    return;
++  }
++  bodyRead = true;
++
++  if (contentSize > 0) {
+     rawBody = std::vector<uint8_t>(contentSize);
+     socketStream.read((char*)rawBody.data(), contentSize);
++    return;
++  }
++
++  std::string encoding(header("transfer-encoding"));
++  std::transform(encoding.begin(), encoding.end(), encoding.begin(),
++                 [](unsigned char c) { return std::tolower(c); });
++  if (encoding.find("chunked") == std::string::npos) {
++    return;
++  }
++
++  // Transfer-Encoding: chunked -> "<hex size>[;ext]\r\n<data>\r\n" ... "0\r\n\r\n"
++  std::string line;
++  while (std::getline(socketStream, line)) {
++    size_t chunkSize = std::strtoul(line.c_str(), nullptr, 16);
++    if (chunkSize == 0) {
++      std::getline(socketStream, line);  // trailer terminator
++      break;
++    }
++    size_t offset = rawBody.size();
++    rawBody.resize(offset + chunkSize);
++    socketStream.read((char*)rawBody.data() + offset, chunkSize);
++    std::getline(socketStream, line);  // CRLF after the chunk
+   }
+ }
+ 
+diff --git a/main/io/include/HTTPClient.h b/main/io/include/HTTPClient.h
+index 8dc6b4b..d4b65ab 100644
+--- a/main/io/include/HTTPClient.h
++++ b/main/io/include/HTTPClient.h
+@@ -68,6 +68,7 @@ class HTTPClient {
+ 
+     size_t contentLength();
+     size_t totalLength();
++    int status() { return statusCode; }
+ 
+    private:
+     bell::URLParser urlParser;
+@@ -82,6 +83,8 @@ class HTTPClient {
+ 
+     size_t contentSize = 0;
+     bool hasContentSize = false;
++    bool bodyRead = false;
++    int statusCode = 0;
+ 
+     Headers responseHeaders;
+ 
