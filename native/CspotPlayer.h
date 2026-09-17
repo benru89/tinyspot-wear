@@ -54,6 +54,8 @@ class CspotPlayer : public NativeSpotifyPlayer {
   std::string zeroconfInfo();
   std::shared_ptr<cspot::SpircHandler> currentHandler();
   void loadWindow(size_t start);
+  // Index of the next window, or 0 when there is nothing after this one.
+  size_t nextWindowStart();
 
   PlayerListener* listener;
   std::string deviceName;
@@ -74,6 +76,7 @@ class CspotPlayer : public NativeSpotifyPlayer {
   std::vector<std::string> contextTracks;
   size_t windowStart = 0;
   bool localContext = false;
+  std::mutex loadMutex;  // serializes loadWindow: JNI thread vs worker
   std::thread sessionThread;
   std::atomic<bool> running{false};
   std::atomic<bool> sessionActive{false};

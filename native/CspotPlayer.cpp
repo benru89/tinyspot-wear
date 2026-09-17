@@ -312,11 +312,7 @@ void CspotPlayer::workerLoop() {
     if (auto h = currentHandler()) {
       if (reached) h->notifyAudioReachedPlayback();
       if (drainedNow && depleted.exchange(false)) {
-        size_t next = 0;
-        {
-          std::lock_guard<std::mutex> l(stateMutex);
-          if (localContext && windowStart + kWindow < contextTracks.size()) next = windowStart + kWindow;
-        }
+        size_t next = nextWindowStart();
         if (next) {
           loadWindow(next);
           lock.lock();
@@ -389,7 +385,16 @@ void CspotPlayer::playContext(const std::string& uri, bool shuffle) {
   });
 }
 
+size_t CspotPlayer::nextWindowStart() {
+  std::lock_guard<std::mutex> lock(stateMutex);
+  if (localContext && windowStart + kWindow < contextTracks.size()) {
+    return windowStart + kWindow;
+  }
+  return 0;
+}
+
 void CspotPlayer::loadWindow(size_t start) {
+  std::lock_guard<std::mutex> loading(loadMutex);
   std::shared_ptr<SpircHandler> h;
   std::vector<std::string> window;
   std::string uri;
@@ -421,7 +426,18 @@ void CspotPlayer::resume() {
   if (h) h->setPause(false);
 }
 void CspotPlayer::next() {
-  if (auto h = currentHandler(); h && h->nextSong()) sink.flush();
+  auto h = currentHandler();
+  if (!h) return;
+  if (h->nextSong()) {
+    sink.flush();
+    return;
+  }
+  // cspot won't skip past the end of its queue, which is one window, so the
+  // last track of every window needs the next window loaded here.
+  if (size_t next = nextWindowStart()) {
+    LOGI("next at window end, loading from %zu", next);
+    loadWindow(next);
+  }
 }
 void CspotPlayer::previous() {
   if (auto h = currentHandler(); h && h->previousSong()) sink.flush();
