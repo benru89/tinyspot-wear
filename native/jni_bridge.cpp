@@ -101,6 +101,10 @@ JNIEXPORT void JNICALL Java_com_rubfer_tinyspot_NativePlayer_nativePlayContext(
   withPlayer([&](NativeSpotifyPlayer& p) { p.playContext(u, shuffle == JNI_TRUE); });
 }
 
+JNIEXPORT void JNICALL Java_com_rubfer_tinyspot_NativePlayer_nativeNetworkChanged(JNIEnv*, jclass) {
+  withPlayer([](NativeSpotifyPlayer& p) { p.networkChanged(); });
+}
+
 JNIEXPORT void JNICALL Java_com_rubfer_tinyspot_NativePlayer_nativePause(JNIEnv*, jclass) {
   withPlayer([](NativeSpotifyPlayer& p) { p.pause(); });
 }

@@ -5,6 +5,7 @@
 #include <functional>
 #include <algorithm>
 #include <map>
+#include <chrono>
 #include <random>
 #include <string_view>
 #include <variant>
@@ -144,7 +145,23 @@ void CspotPlayer::startSession(std::shared_ptr<cspot::LoginBlob> blob) {
 // ---------------------------------------------------------------------------
 // Session thread: AP connect -> auth -> Spirc -> packet loop.
 // ---------------------------------------------------------------------------
+// Retries with backoff: the watch is often asleep on Wi-Fi, or between
+// networks, when the first attempt is made.
 void CspotPlayer::sessionLoop(std::shared_ptr<cspot::LoginBlob> blob) {
+  int delaySeconds = 2;
+  while (running) {
+    if (!runSession(blob)) break;  // credentials rejected: retrying won't help
+    if (!running) break;
+    LOGI("session ended, retrying in %ds", delaySeconds);
+    for (int i = 0; i < delaySeconds * 10 && running; i++) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+    delaySeconds = std::min(delaySeconds * 2, 60);
+  }
+  sessionActive = false;
+}
+
+bool CspotPlayer::runSession(std::shared_ptr<cspot::LoginBlob> blob) {
   emit(Event::AUTH_STATE, 1);
   try {
     auto c = cspot::Context::createFromBlob(blob);
@@ -155,8 +172,7 @@ void CspotPlayer::sessionLoop(std::shared_ptr<cspot::LoginBlob> blob) {
       LOGE("authentication failed");
       emit(Event::AUTH_STATE, 3);
       emit(Event::ERROR, 0, "Spotify login declined");
-      sessionActive = false;
-      return;
+      return false;
     }
     LOGI("authenticated as %s", c->config.username.c_str());
     emit(Event::CREDENTIALS, 0, c->getCredentialsJson());
@@ -223,7 +239,16 @@ void CspotPlayer::sessionLoop(std::shared_ptr<cspot::LoginBlob> blob) {
   }
   sink.setPlaying(false);
   emit(Event::AUTH_STATE, 0);
-  sessionActive = false;
+  return true;
+}
+
+
+void CspotPlayer::networkChanged() {
+  std::lock_guard<std::mutex> lock(stateMutex);
+  if (ctx) {
+    LOGI("network changed, dropping the session socket");
+    ctx->session->close();
+  }
 }
 
 void CspotPlayer::onSpircEvent(int type, int i, bool b, void* ti) {

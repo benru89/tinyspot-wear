@@ -56,6 +56,7 @@ public class PlayerService extends Service implements NativePlayer.Listener {
     private NsdManager nsd;
     private NsdManager.RegistrationListener nsdListener;
     private boolean nativeStarted;
+    private Network boundNetwork;
 
     static void setUiListener(UiListener l) {
         uiListener = l;
@@ -119,7 +120,12 @@ public class PlayerService extends Service implements NativePlayer.Listener {
                 boolean wifi = caps != null && caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI);
                 Log.i(TAG, (wifi ? "Wi-Fi" : "LTE") + " available, binding process to it");
                 cm.bindProcessToNetwork(network);
-                main.post(() -> startNative());
+                boolean switched = boundNetwork != null && !boundNetwork.equals(network);
+                boundNetwork = network;
+                main.post(() -> {
+                    if (nativeStarted && switched) NativePlayer.nativeNetworkChanged();
+                    startNative();
+                });
             }
 
             @Override

@@ -32,6 +32,8 @@ class CspotPlayer : public NativeSpotifyPlayer {
   void requestPlaylists() override;
   void playContext(const std::string& contextUri, bool shuffle) override;
 
+  void networkChanged() override;
+
   void pause() override;
   void resume() override;
   void next() override;
@@ -43,6 +45,8 @@ class CspotPlayer : public NativeSpotifyPlayer {
  private:
   void startSession(std::shared_ptr<cspot::LoginBlob> blob);
   void sessionLoop(std::shared_ptr<cspot::LoginBlob> blob);
+  // false = credentials rejected, don't retry.
+  bool runSession(std::shared_ptr<cspot::LoginBlob> blob);
   void onSpircEvent(int type, int intData, bool boolData, void* trackInfo);
   void workerLoop();
   void emit(Event e, int arg1, const std::string& text = std::string());

@@ -44,6 +44,8 @@ final class NativePlayer {
     static native void nativeRequestPlaylists();
     /** Plays a playlist or Liked Songs URI, resolved on the watch. */
     static native void nativePlayContext(String contextUri, boolean shuffle);
+    /** Bound network changed: reconnect the session now. */
+    static native void nativeNetworkChanged();
     static native void nativePause();
     static native void nativeResume();
     static native void nativeNext();

@@ -41,6 +41,10 @@ class NativeSpotifyPlayer {
   // Resolves a playlist / Liked Songs URI on the watch and starts playing it.
   virtual void playContext(const std::string& contextUri, bool shuffle) = 0;
 
+  // The bound network changed (Wi-Fi <-> LTE): drop the stale socket so the
+  // session reconnects now instead of waiting for the ping timeout.
+  virtual void networkChanged() = 0;
+
   virtual void pause() = 0;
   virtual void resume() = 0;
   virtual void next() = 0;
