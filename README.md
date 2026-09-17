@@ -19,25 +19,28 @@ Working on the watch:
   audio focus, pause when headphones disconnect.
 - Also acts as a Spotify Connect target for casting from the phone.
 
+Verified on the watch 2026-09-17: Bluetooth headset buttons, playback with the
+phone switched off, playback over LTE, and Wi-Fi <-> LTE handover mid-track.
+
 ## To do
 
-3. **Credential lifetime.** The requirement is weeks. Reusable credentials
-   normally last until the password changes, but that is unproven here.
+1. **Credential lifetime.** The goal is weeks. Reusable credentials normally
+   last until the password changes, but that is unproven here.
 
 Known rough edges:
 
-4. **Playback loads 100 tracks at a time** because cspot re-sends its whole
+2. **Playback loads 100 tracks at a time** because cspot re-sends its whole
    queue in every Spirc notify. Shuffling covers the whole list, but each
    window seam is an edge case (the Next fix above was one).
-5. **No seek UI** (elapsed/total is shown; `nativeSeek` has no control), no
+3. **No seek UI** (elapsed/total is shown; `nativeSeek` has no control), no
    search, no album/artist browsing, no artwork, no volume UI.
-6. **Casting from the phone still uses SPIRC**, the protocol librespot dropped
+4. **Casting from the phone still uses SPIRC**, the protocol librespot dropped
    in 2025. Standalone playback no longer depends on it, so if Spotify retires
    it, only phone-casting breaks.
-7. **The zeroconf endpoint keeps running after login** (civetweb, 1 thread). It
+5. **The zeroconf endpoint keeps running after login** (civetweb, 1 thread). It
    could stop once credentials are stored, at the cost of needing a restart to
    pair a different account.
-8. **Third-party code is built with `-Wno-everything`.** Building it with
+6. **Third-party code is built with `-Wno-everything`.** Building it with
    warnings once turned up the URL parser overflow (patch bell 0003); what is
    left is unused-variable noise and warnings in civetweb paths we never call.
 
