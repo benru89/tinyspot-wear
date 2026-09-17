@@ -57,6 +57,7 @@ public class PlayerService extends Service implements NativePlayer.Listener {
     private NsdManager.RegistrationListener nsdListener;
     private boolean nativeStarted;
     private Network boundNetwork;
+    private MediaSessionManager media;
 
     static void setUiListener(UiListener l) {
         uiListener = l;
@@ -74,6 +75,7 @@ public class PlayerService extends Service implements NativePlayer.Listener {
         super.onCreate();
         startForeground(1, buildNotification());
         NativePlayer.setListener(this);
+        media = new MediaSessionManager(this);
         cm = (ConnectivityManager) getSystemService(CONNECTIVITY_SERVICE);
         nsd = (NsdManager) getSystemService(NSD_SERVICE);
         requestWifi();
@@ -97,6 +99,7 @@ public class PlayerService extends Service implements NativePlayer.Listener {
             cm.unregisterNetworkCallback(wifiCallback);
         }
         NativePlayer.setListener(null);
+        if (media != null) media.release();
         if (nativeStarted) NativePlayer.nativeShutdown();
         super.onDestroy();
     }
@@ -230,6 +233,7 @@ public class PlayerService extends Service implements NativePlayer.Listener {
             default:
                 return;
         }
+        if (media != null) media.update(state);
         if (uiListener != null) uiListener.onStateChanged(state);
     }
 

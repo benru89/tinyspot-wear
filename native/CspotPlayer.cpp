@@ -411,10 +411,14 @@ void CspotPlayer::loadWindow(size_t start) {
 // Local controls (watch UI / media buttons) -> Spirc, which notifies Spotify.
 // ---------------------------------------------------------------------------
 void CspotPlayer::pause() {
-  if (auto h = currentHandler()) h->setPause(true);
+  auto h = currentHandler();
+  LOGI("pause requested (session %s)", h ? "up" : "down");
+  if (h) h->setPause(true);
 }
 void CspotPlayer::resume() {
-  if (auto h = currentHandler()) h->setPause(false);
+  auto h = currentHandler();
+  LOGI("resume requested (session %s)", h ? "up" : "down");
+  if (h) h->setPause(false);
 }
 void CspotPlayer::next() {
   if (auto h = currentHandler(); h && h->nextSong()) sink.flush();

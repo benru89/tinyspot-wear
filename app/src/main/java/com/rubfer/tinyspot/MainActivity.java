@@ -44,11 +44,24 @@ public class MainActivity extends Activity implements PlayerService.UiListener {
         debugPlay(intent);
     }
 
-    /** adb testing: am start -n .../.MainActivity --es play URI [--ez shuffle true] */
+    /**
+     * adb testing: am start -n .../.MainActivity --es play URI [--ez shuffle true]
+     * or --es cmd pause|resume|next|prev
+     */
     private static void debugPlay(android.content.Intent intent) {
+        if (!BuildConfig.DEBUG) return;
         String play = intent.getStringExtra("play");
-        if (BuildConfig.DEBUG && play != null) {
+        if (play != null) {
             NativePlayer.nativePlayContext(play, intent.getBooleanExtra("shuffle", false));
+        }
+        String cmd = intent.getStringExtra("cmd");
+        if (cmd == null) return;
+        switch (cmd) {
+            case "pause": NativePlayer.nativePause(); break;
+            case "resume": NativePlayer.nativeResume(); break;
+            case "next": NativePlayer.nativeNext(); break;
+            case "prev": NativePlayer.nativePrevious(); break;
+            default: break;
         }
     }
 
