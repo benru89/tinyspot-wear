@@ -72,6 +72,14 @@ set(PROTOBUF_PROTOC_EXECUTABLE ${CMAKE_CURRENT_SOURCE_DIR}/tools/protoc CACHE FI
 add_subdirectory(${TP}/cspot/cspot ${CMAKE_BINARY_DIR}/cspot EXCLUDE_FROM_ALL)
 target_compile_definitions(bell PRIVATE USE_IPV6)  # civetweb: dual-stack zeroconf
 
+# Size-first hurts here: the Vorbis decoder (tremor, inside bell) and mbedTLS
+# run continuously while streaming, so speed beats a few KB.
+foreach(t bell cspot mbedcrypto mbedtls mbedx509)
+  if(TARGET ${t})
+    target_compile_options(${t} PRIVATE -O2)
+  endif()
+endforeach()
+
 # ---------------------------------------------------------------------------
 # libtinyspot.so
 # ---------------------------------------------------------------------------

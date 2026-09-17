@@ -1,0 +1,18 @@
+diff --git a/main/platform/linux/WrappedSemaphore.cpp b/main/platform/linux/WrappedSemaphore.cpp
+index ca44436..cea4e57 100644
+--- a/main/platform/linux/WrappedSemaphore.cpp
++++ b/main/platform/linux/WrappedSemaphore.cpp
+@@ -25,6 +25,13 @@ int WrappedSemaphore::twait(long milliseconds) {
+ 
+   ts.tv_sec = tv.tv_sec + milliseconds / 1000;
+   ts.tv_nsec = tv.tv_usec * 1000 + (milliseconds % 1000) * 1000000;
++  // tv_nsec must stay below 1e9: sem_timedwait rejects anything else with
++  // EINVAL and returns at once, which turns every timed wait in cspot into a
++  // spin loop for part of each second (~10% of a core on a watch).
++  if (ts.tv_nsec >= 1000000000L) {
++    ts.tv_sec += 1;
++    ts.tv_nsec -= 1000000000L;
++  }
+   return sem_timedwait(&this->semaphoreHandle, &ts);
+ }
+ 

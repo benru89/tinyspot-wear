@@ -27,12 +27,14 @@ open: phone off, LTE, and Wi-Fi/LTE handover.
 
 | | |
 |---|---|
-| APK | 981 KB (`libtinyspot.so` 956 KB, `classes.dex` 16 KB) |
+| APK | 1.04 MB (`libtinyspot.so` ~1.01 MB, `classes.dex` 16 KB) |
 | RAM idle (logged in) | 8.9 MB PSS |
-| RAM playing | 11.0 MB PSS (native heap 3.0 MB) |
-| CPU playing | 3.3 % |
+| RAM playing | 12-16 MB PSS (native heap 4.3 MB) |
+| CPU idle, logged in, screen off | 0.1 % of one core |
+| CPU playing, screen off | 3.5 % of one core, measured over 3 min |
 | Wake locks | none held by the app |
 | Audio | 44.1 kHz s16 stereo, 4096-frame OpenSL ES buffers (~11 wakeups/s), 172 KB ring buffer |
+| Playback with the screen off | survived 60/60 samples over 10 min |
 
 ## Architecture
 
@@ -106,6 +108,7 @@ current Spotify. 0002-0006 are ported from the actively maintained
 | cspot 0009 | `readBlock` added -1 to its offset on `EINTR`, shifting the stream: MAC mismatches and lost replies |
 | cspot 0010 | optional HTTP metadata provider, replacing `hm://metadata/3` |
 | bell 0001 | HTTP client dropped chunked bodies, hid status codes, and sent a duplicate `Accept` that made the token service return an empty body |
+| bell 0002 | `WrappedSemaphore::twait` built a timespec with `tv_nsec >= 1e9`, so `sem_timedwait` returned EINVAL at once and every timed wait in cspot spun: 10.7 % of a core while idle, 12.3 % playing, down to 0.1 % / 3.5 % once fixed |
 
 ## Logging
 
