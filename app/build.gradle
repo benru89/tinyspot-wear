@@ -2,6 +2,16 @@ plugins {
     id 'com.android.application'
 }
 
+// Signing lives outside the project so no key or password can end up in the
+// source tree. Create it with tools/make-keystore.sh; without it, release
+// builds fall back to the debug key (fine for sideloading, but such an APK
+// cannot be upgraded by a properly signed one).
+def keystorePropsFile = file("${System.getProperty('user.home')}/.config/tinyspot/keystore.properties")
+def keystoreProps = new Properties()
+if (keystorePropsFile.exists()) {
+    keystorePropsFile.withInputStream { keystoreProps.load(it) }
+}
+
 def abiList = (project.findProperty('tinyspot.abis') ?: 'armeabi-v7a').split(',')*.trim()
 
 android {
@@ -38,6 +48,17 @@ android {
         }
     }
 
+    signingConfigs {
+        release {
+            if (keystoreProps['storeFile']) {
+                storeFile file(keystoreProps['storeFile'])
+                storePassword keystoreProps['storePassword']
+                keyAlias keystoreProps['keyAlias']
+                keyPassword keystoreProps['keyPassword']
+            }
+        }
+    }
+
     buildTypes {
         debug {
             externalNativeBuild { cmake { arguments '-DCMAKE_BUILD_TYPE=Debug' } }
@@ -46,8 +67,7 @@ android {
             minifyEnabled true
             shrinkResources true
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
-            // Sideload build: sign with the debug key until a real key exists.
-            signingConfig signingConfigs.debug
+            signingConfig keystoreProps['storeFile'] ? signingConfigs.release : signingConfigs.debug
             externalNativeBuild { cmake { arguments '-DCMAKE_BUILD_TYPE=MinSizeRel' } }
         }
     }
