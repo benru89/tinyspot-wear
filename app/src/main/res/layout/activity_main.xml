@@ -71,4 +71,12 @@
             android:contentDescription="Next"
             android:src="@android:drawable/ic_media_next" />
     </LinearLayout>
+
+    <Button
+        android:id="@+id/library"
+        android:layout_width="wrap_content"
+        android:layout_height="36dp"
+        android:minHeight="0dp"
+        android:text="Library"
+        android:textSize="13sp" />
 </LinearLayout>

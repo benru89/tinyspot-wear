@@ -3,13 +3,18 @@
 #include <android/log.h>
 
 #include <functional>
+#include <algorithm>
 #include <map>
+#include <random>
 #include <string_view>
 #include <variant>
 
-#include "BellHTTPServer.h"
+#include <cstring>
+
+#include "cJSON.h"
 #include "CSpotContext.h"
 #include "LoginBlob.h"
+#include "SpotifyLibrary.h"
 #include "SpircHandler.h"
 #include "TrackPlayer.h"
 #include "civetweb.h"
@@ -44,44 +49,81 @@ std::shared_ptr<SpircHandler> CspotPlayer::currentHandler() {
 int CspotPlayer::startDiscovery(int port) {
   if (http) return port;
   discoveryBlob = std::make_shared<cspot::LoginBlob>(deviceName);
-  try {
-    http = std::make_unique<bell::BellHTTPServer>(port);
-  } catch (const std::exception& ex) {
-    LOGE("zeroconf server failed on port %d: %s", port, ex.what());
+
+  // "+port" = IPv4 and IPv6: phones often resolve the AAAA record first.
+  std::string ports = "+" + std::to_string(port);
+  const char* options[] = {"listening_ports", ports.c_str(), "num_threads", "1", nullptr};
+  mg_init_library(0);
+  http = mg_start(nullptr, nullptr, options);
+  if (!http) {
+    LOGE("zeroconf server failed on port %d", port);
     return 0;
   }
+  mg_set_request_handler(http, "/spotify_info", &CspotPlayer::handleZeroconf, this);
+  LOGI("zeroconf endpoint on port %d (IPv4+IPv6)", port);
+  return port;
+}
 
-  http->registerGet("/spotify_info", [this](mg_connection*) {
-    LOGI("zeroconf getInfo");
-    return http->makeJsonResponse(discoveryBlob->buildZeroconfInfo());
-  });
+// cspot's getInfo lacks fields current Spotify apps expect; align it with
+// librespot's (discovery/src/server.rs), which the apps list.
+std::string CspotPlayer::zeroconfInfo() {
+  cJSON* o = cJSON_Parse(discoveryBlob->buildZeroconfInfo().c_str());
+  auto set = [o](const char* k, cJSON* v) {
+    if (cJSON_HasObjectItem(o, k)) cJSON_ReplaceItemInObject(o, k, v);
+    else cJSON_AddItemToObject(o, k, v);
+  };
+  set("spotifyError", cJSON_CreateNumber(0));
+  set("version", cJSON_CreateString("2.9.0"));
+  set("resolverVersion", cJSON_CreateString("1"));
+  set("scope", cJSON_CreateString("streaming"));
+  set("brandDisplayName", cJSON_CreateString("TinySpot"));
+  set("clientID", cJSON_CreateString("65b708073fc0480ea92a077233ca87bd"));
+  set("supported_drm_media_formats", cJSON_CreateArray());
+  set("supported_capabilities", cJSON_CreateNumber(1));
+  set("aliases", cJSON_CreateArray());
+  char* str = cJSON_PrintUnformatted(o);
+  std::string out(str);
+  free(str);
+  cJSON_Delete(o);
+  return out;
+}
 
-  http->registerPost("/spotify_info", [this](mg_connection* conn) {
-    auto info = mg_get_request_info(conn);
-    if (info->content_length > 0) {
-      std::string body(info->content_length, '\0');
-      mg_read(conn, body.data(), info->content_length);
+int CspotPlayer::handleZeroconf(mg_connection* conn, void* selfPtr) {
+  auto* self = static_cast<CspotPlayer*>(selfPtr);
+  const mg_request_info* info = mg_get_request_info(conn);
+  std::string body;
 
-      mg_header hd[10];
-      int num = mg_split_form_urlencoded(body.data(), hd, 10);
-      std::map<std::string, std::string> query;
-      for (int i = 0; i < num; i++) query[hd[i].name] = hd[i].value;
+  if (strcmp(info->request_method, "POST") == 0) {
+    std::string form(info->content_length > 0 ? info->content_length : 0, '\0');
+    if (!form.empty()) mg_read(conn, form.data(), form.size());
+    mg_header hd[16];
+    int num = mg_split_form_urlencoded(form.data(), hd, 16);
+    std::map<std::string, std::string> query;
+    for (int i = 0; i < num; i++) query[hd[i].name] = hd[i].value;
+    LOGI("zeroconf %s from %s", query.count("action") ? query["action"].c_str() : "POST",
+         info->remote_addr);
 
-      if (sessionActive) {
+    if (query.count("blob")) {
+      if (self->sessionActive) {
         LOGI("zeroconf addUser ignored: session already active");
       } else {
-        LOGI("zeroconf addUser received, logging in");
         // Decrypting needs the same keypair getInfo advertised.
-        discoveryBlob->loadZeroconfQuery(query);
-        startSession(discoveryBlob);
+        self->discoveryBlob->loadZeroconfQuery(query);
+        self->startSession(self->discoveryBlob);
       }
     }
-    return http->makeJsonResponse(
-        R"({"status":101,"spotifyError":0,"statusString":"ERROR-OK"})");
-  });
+    body = R"({"status":101,"spotifyError":0,"statusString":"OK"})";
+  } else {
+    LOGI("zeroconf getInfo from %s", info->remote_addr);
+    body = self->zeroconfInfo();
+  }
 
-  LOGI("zeroconf endpoint on port %d", port);
-  return port;
+  mg_printf(conn,
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n"
+            "Content-Length: %zu\r\nConnection: close\r\n\r\n",
+            body.size());
+  mg_write(conn, body.data(), body.size());
+  return 200;
 }
 
 void CspotPlayer::loginStored(const std::string& json) {
@@ -150,10 +192,12 @@ void CspotPlayer::sessionLoop(std::shared_ptr<cspot::LoginBlob> blob) {
       std::lock_guard<std::mutex> lock(stateMutex);
       ctx = c;
       handler = h;
+      library = std::make_shared<SpotifyLibrary>(c);
     }
     c->session->startTask();
     emit(Event::AUTH_STATE, 2);
     LOGI("Spotify Connect device '%s' online", deviceName.c_str());
+
 
     while (running) c->session->handlePacket();
 
@@ -165,6 +209,7 @@ void CspotPlayer::sessionLoop(std::shared_ptr<cspot::LoginBlob> blob) {
   {
     std::lock_guard<std::mutex> lock(stateMutex);
     handler.reset();
+    library.reset();
     ctx.reset();
   }
   sink.setPlaying(false);
@@ -206,9 +251,15 @@ void CspotPlayer::onSpircEvent(int type, int i, bool b, void* ti) {
       sink.setPlaying(false);
       emit(Event::PLAYBACK_STATE, 0);
       break;
-    case T::DEPLETED:
+    case T::DEPLETED: {
+      std::lock_guard<std::mutex> lock(stateMutex);
+      if (localContext && windowStart + kWindow < contextTracks.size()) {
+        // Window played out: the worker loads the next one once audio drains.
+        LOGI("window finished, next starts at %zu", windowStart + kWindow);
+      }
       depleted = true;
       break;
+    }
     case T::VOLUME:
       sink.setVolume(i);
       emit(Event::VOLUME, i);
@@ -227,6 +278,16 @@ void CspotPlayer::workerLoop() {
     if (auto h = currentHandler()) {
       if (reached) h->notifyAudioReachedPlayback();
       if (drainedNow && depleted.exchange(false)) {
+        size_t next = 0;
+        {
+          std::lock_guard<std::mutex> l(stateMutex);
+          if (localContext && windowStart + kWindow < contextTracks.size()) next = windowStart + kWindow;
+        }
+        if (next) {
+          loadWindow(next);
+          lock.lock();
+          continue;
+        }
         LOGI("queue finished");
         sink.setPlaying(false);
         h->notifyAudioEnded();
@@ -235,6 +296,77 @@ void CspotPlayer::workerLoop() {
     }
     lock.lock();
   }
+}
+
+// ---------------------------------------------------------------------------
+// Library: browse and start playback on the watch itself.
+// ---------------------------------------------------------------------------
+void CspotPlayer::requestPlaylists() {
+  std::shared_ptr<SpotifyLibrary> lib;
+  {
+    std::lock_guard<std::mutex> lock(stateMutex);
+    lib = library;
+  }
+  if (!lib) {
+    emit(Event::PLAYLISTS, 0);
+    return;
+  }
+  lib->playlists([this](bool ok, SpotifyLibrary::Playlists list) {
+    std::string text;
+    for (auto& [uri, name] : list) {
+      std::string clean = name;
+      std::replace(clean.begin(), clean.end(), '\t', ' ');
+      std::replace(clean.begin(), clean.end(), '\n', ' ');
+      text += uri + "\t" + clean + "\n";
+    }
+    emit(Event::PLAYLISTS, ok ? 1 : 0, text);
+  });
+}
+
+void CspotPlayer::playContext(const std::string& uri, bool shuffle) {
+  std::shared_ptr<SpotifyLibrary> lib;
+  {
+    std::lock_guard<std::mutex> lock(stateMutex);
+    lib = library;
+  }
+  LOGI("playContext %s shuffle=%d (library %s)", uri.c_str(), shuffle, lib ? "ready" : "missing");
+  if (!lib) return;
+  emit(Event::PLAYBACK_STATE, 3);
+  lib->tracks(uri, [this, uri, shuffle](bool ok, SpotifyLibrary::Tracks tracks) {
+    if (!ok) {
+      LOGE("could not load %s", uri.c_str());
+      emit(Event::ERROR, 0, "could not load " + uri);
+      emit(Event::PLAYBACK_STATE, 0);
+      return;
+    }
+    if (shuffle) std::shuffle(tracks.begin(), tracks.end(), std::mt19937(std::random_device{}()));
+    {
+      std::lock_guard<std::mutex> lock(stateMutex);
+      contextUri = uri;
+      contextTracks = std::move(tracks);
+      localContext = true;
+    }
+    // Runs on the session thread; loading only queues work, it doesn't block.
+    loadWindow(0);
+  });
+}
+
+void CspotPlayer::loadWindow(size_t start) {
+  std::shared_ptr<SpircHandler> h;
+  std::vector<std::string> window;
+  std::string uri;
+  {
+    std::lock_guard<std::mutex> lock(stateMutex);
+    h = handler;
+    if (!h || start >= contextTracks.size()) return;
+    windowStart = start;
+    size_t end = std::min(contextTracks.size(), start + kWindow);
+    window.assign(contextTracks.begin() + start, contextTracks.begin() + end);
+    uri = contextUri;
+  }
+  depleted = false;
+  sink.flush();
+  h->loadTracks(window, 0, uri);
 }
 
 // ---------------------------------------------------------------------------
@@ -268,8 +400,8 @@ void CspotPlayer::shutdown() {
   running = false;
   if (sessionThread.joinable()) sessionThread.join();
   if (http) {
-    http->close();
-    http.reset();
+    mg_stop(http);
+    http = nullptr;
   }
   {
     std::lock_guard<std::mutex> l(workMutex);

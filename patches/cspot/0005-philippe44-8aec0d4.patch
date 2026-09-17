@@ -1,0 +1,124 @@
+From 8aec0d407abb928c7089f1ee3c5ffaf6f21adca5 Mon Sep 17 00:00:00 2001
+From: 007hacky007 <007hacky007@users.noreply.github.com>
+Date: Sun, 19 Jul 2026 13:35:00 +0200
+Subject: [PATCH] TrackQueue: lock getTrackInfo and the track-list frame encode
+
+Two more paths read queue state without tracksMutex:
+
+- getTrackInfo() iterated preloadedTracks while the mercury thread can
+  clear and repopulate the deque in updateTracks(); concurrent
+  iteration and mutation of the deque is undefined behavior. The
+  per-entry identifiers make this path hotter, since consecutive plays
+  of the same file now trigger the integrations' track handler.
+
+- the nanopb encode callback registered for innerFrame copied
+  currentTracks whenever a frame was encoded (any notify(), from any
+  thread) while updateTracks() can assign a new vector concurrently.
+  The callback argument now carries the list together with its guard
+  and the encoder holds it for the duration of the memory-only encode.
+
+Frame sends happen strictly after queue calls return, never under
+tracksMutex, so no lock-order cycle is introduced.
+---
+ cspot/include/TrackQueue.h     |  4 ++++
+ cspot/include/TrackReference.h | 13 ++++++++++++-
+ cspot/src/TrackQueue.cpp       |  9 +++++++--
+ cspot/src/TrackReference.cpp   |  7 ++++++-
+ 4 files changed, 29 insertions(+), 4 deletions(-)
+
+diff --git a/cspot/include/TrackQueue.h b/cspot/include/TrackQueue.h
+index f7881c1..04b3652 100644
+--- a/cspot/include/TrackQueue.h
++++ b/cspot/include/TrackQueue.h
+@@ -137,6 +137,10 @@ class TrackQueue : public bell::Task {
+   std::vector<TrackReference> currentTracks;
+   std::mutex tracksMutex, runningMutex;
+ 
++  // nanopb encode argument: currentTracks plus its guard (see
++  // TrackReference::pbEncodeTrackList)
++  TrackReference::LockedTrackList pbTracksArg;
++
+   // PB data
+   Track pbTrack;
+   Episode pbEpisode;
+diff --git a/cspot/include/TrackReference.h b/cspot/include/TrackReference.h
+index 8b98634..454dac2 100644
+--- a/cspot/include/TrackReference.h
++++ b/cspot/include/TrackReference.h
+@@ -1,6 +1,7 @@
+ #pragma once
+ 
+ #include <pb_encode.h>
++#include <mutex>
+ #include <optional>
+ #include <string_view>
+ #include <vector>
+@@ -26,7 +27,17 @@ struct TrackReference {
+ 
+   bool operator==(const TrackReference& other) const;
+ 
+-  // Encodes list of track references into a pb structure, used by nanopb
++  /* Argument for pbEncodeTrackList: the track list together with the mutex
++   * that guards it. Frames are encoded from whatever thread calls notify()
++   * while the mercury thread can rebuild the list, so the encoder must hold
++   * the same lock as the writers. */
++  struct LockedTrackList {
++    std::mutex* mutex;
++    std::vector<TrackReference>* tracks;
++  };
++
++  // Encodes list of track references into a pb structure, used by nanopb.
++  // *arg must point at a LockedTrackList
+   static bool pbEncodeTrackList(pb_ostream_t* stream, const pb_field_t* field,
+                                 void* const* arg);
+ 
+diff --git a/cspot/src/TrackQueue.cpp b/cspot/src/TrackQueue.cpp
+index b66dd51..379c230 100644
+--- a/cspot/src/TrackQueue.cpp
++++ b/cspot/src/TrackQueue.cpp
+@@ -378,10 +378,12 @@ TrackQueue::TrackQueue(std::shared_ptr<cspot::Context> ctx,
+   processSemaphore = std::make_shared<bell::WrappedSemaphore>();
+   playableSemaphore = std::make_shared<bell::WrappedSemaphore>();
+ 
+-  // Assign encode callback to track list
++  // Assign encode callback to track list; the encoder runs on whatever
++  // thread sends a frame, so hand it the list together with its guard
++  pbTracksArg = {&tracksMutex, &currentTracks};
+   playbackState->innerFrame.state.track.funcs.encode =
+       &TrackReference::pbEncodeTrackList;
+-  playbackState->innerFrame.state.track.arg = &currentTracks;
++  playbackState->innerFrame.state.track.arg = &pbTracksArg;
+   pbTrack = Track_init_zero;
+   pbEpisode = Episode_init_zero;
+ 
+@@ -399,6 +401,9 @@ TrackQueue::~TrackQueue() {
+ }
+ 
+ TrackInfo TrackQueue::getTrackInfo(std::string_view identifier) {
++  // preloadedTracks can be rebuilt by the mercury thread at any moment
++  std::scoped_lock lock(tracksMutex);
++
+   for (auto& track : preloadedTracks) {
+     if (track->identifier == identifier)
+       return track->trackInfo;
+diff --git a/cspot/src/TrackReference.cpp b/cspot/src/TrackReference.cpp
+index 3b3b703..314c31a 100644
+--- a/cspot/src/TrackReference.cpp
++++ b/cspot/src/TrackReference.cpp
+@@ -37,7 +37,12 @@ bool TrackReference::operator==(const TrackReference& other) const {
+ bool TrackReference::pbEncodeTrackList(pb_ostream_t* stream,
+                                        const pb_field_t* field,
+                                        void* const* arg) {
+-  auto trackQueue = *static_cast<std::vector<TrackReference>*>(*arg);
++  auto* locked = static_cast<LockedTrackList*>(*arg);
++
++  // hold the list's guard for the duration of the (memory-only) encode so a
++  // concurrent rebuild cannot reallocate the vector under us
++  std::scoped_lock lock(*locked->mutex);
++  auto& trackQueue = *locked->tracks;
+   static TrackRef msg = TrackRef_init_zero;
+ 
+   // Prepare nanopb callbacks
+-- 
+2.43.0
+

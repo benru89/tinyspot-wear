@@ -91,6 +91,16 @@ JNIEXPORT void JNICALL Java_com_rubfer_tinyspot_NativePlayer_nativeLogin(
   withPlayer([&](NativeSpotifyPlayer& p) { p.loginStored(json); });
 }
 
+JNIEXPORT void JNICALL Java_com_rubfer_tinyspot_NativePlayer_nativeRequestPlaylists(JNIEnv*, jclass) {
+  withPlayer([](NativeSpotifyPlayer& p) { p.requestPlaylists(); });
+}
+
+JNIEXPORT void JNICALL Java_com_rubfer_tinyspot_NativePlayer_nativePlayContext(
+    JNIEnv* env, jclass, jstring uri, jboolean shuffle) {
+  std::string u = toStd(env, uri);
+  withPlayer([&](NativeSpotifyPlayer& p) { p.playContext(u, shuffle == JNI_TRUE); });
+}
+
 JNIEXPORT void JNICALL Java_com_rubfer_tinyspot_NativePlayer_nativePause(JNIEnv*, jclass) {
   withPlayer([](NativeSpotifyPlayer& p) { p.pause(); });
 }

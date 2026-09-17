@@ -1,0 +1,89 @@
+diff --git a/cspot/src/AccessKeyFetcher.cpp b/cspot/src/AccessKeyFetcher.cpp
+index 2d9783d..b88557a 100644
+--- a/cspot/src/AccessKeyFetcher.cpp
++++ b/cspot/src/AccessKeyFetcher.cpp
+@@ -7,6 +7,7 @@
+ #include <vector>            // for vector
+ 
+ #include "BellLogger.h"    // for AbstractLogger
++#include "BellUtils.h"     // for BELL_SLEEP_MS    // for AbstractLogger
+ #include "CSpotContext.h"  // for Context
+ #include "HTTPClient.h"
+ #include "Logger.h"            // for CSPOT_LOG
+@@ -99,12 +100,21 @@ void AccessKeyFetcher::updateAccessKey() {
+     CSPOT_LOG(info, "Access token expired, fetching new one... %d",
+               encodedRequest.size());
+ 
+-    // Perform a login5 request, containing the encoded protobuf data
+-    auto response = bell::HTTPClient::post(
+-        "https://login5.spotify.com/v3/login",
+-        {{"Content-Type", "application/x-protobuf"}}, encodedRequest);
+-
+-    auto responseBytes = response->bytes();
++    // Perform a login5 request, containing the encoded protobuf data. A
++    // network error here (TLS handshake, DNS during a Wi-Fi/LTE switch) must
++    // not escape: this runs on the queue task, which has no handler.
++    std::vector<uint8_t> responseBytes;
++    try {
++      auto response = bell::HTTPClient::post(
++          "https://login5.spotify.com/v3/login",
++          {{"Content-Type", "application/x-protobuf"}}, encodedRequest);
++      responseBytes = response->bytes();
++    } catch (const std::exception& e) {
++      CSPOT_LOG(error, "Access token request failed: %s", e.what());
++      BELL_SLEEP_MS(3000);
++      retryCount--;
++      continue;
++    }
+ 
+     // Deserialize the response
+     pbDecode(loginResponse, LoginResponse_fields, responseBytes);
+diff --git a/cspot/src/MercurySession.cpp b/cspot/src/MercurySession.cpp
+index 7aafbb7..d1d6ae6 100644
+--- a/cspot/src/MercurySession.cpp
++++ b/cspot/src/MercurySession.cpp
+@@ -65,27 +65,28 @@ void MercurySession::runTask() {
+ void MercurySession::reconnect() {
+   isReconnecting = true;
+ 
+-  try {
+-    this->conn = nullptr;
+-    this->shanConn = nullptr;
+-
+-    this->connectWithRandomAp();
+-    this->authenticate(this->authBlob);
++  // Retry in a loop, not by recursion: an outage of hours must not grow the
++  // stack by one frame every 5 s.
++  while (isRunning) {
++    try {
++      this->conn = nullptr;
++      this->shanConn = nullptr;
+ 
+-    CSPOT_LOG(info, "Reconnection successful");
++      this->connectWithRandomAp();
++      this->authenticate(this->authBlob);
+ 
+-    BELL_SLEEP_MS(100);
++      CSPOT_LOG(info, "Reconnection successful");
+ 
+-    lastPingTimestamp = timeProvider->getSyncedTimestamp();
+-    isReconnecting = false;
++      BELL_SLEEP_MS(100);
+ 
+-    this->executeEstabilishedCallback = true;
+-  } catch (...) {
+-    CSPOT_LOG(error, "Cannot reconnect, will retry in 5s");
+-    BELL_SLEEP_MS(5000);
++      lastPingTimestamp = timeProvider->getSyncedTimestamp();
++      isReconnecting = false;
+ 
+-    if (isRunning) {
+-      return reconnect();
++      this->executeEstabilishedCallback = true;
++      return;
++    } catch (...) {
++      CSPOT_LOG(error, "Cannot reconnect, will retry in 5s");
++      BELL_SLEEP_MS(5000);
+     }
+   }
+ }

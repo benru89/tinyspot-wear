@@ -1,0 +1,42 @@
+diff --git a/cspot/src/PlainConnection.cpp b/cspot/src/PlainConnection.cpp
+index 1bff6cf..b223035 100644
+--- a/cspot/src/PlainConnection.cpp
++++ b/cspot/src/PlainConnection.cpp
+@@ -138,7 +138,11 @@ void PlainConnection::readBlock(const uint8_t* dst, size_t size) {
+ 
+   while (idx < size) {
+   READ:
+-    if ((n = recv(this->apSock, (char*)&dst[idx], size - idx, 0)) <= 0) {
++    n = recv(this->apSock, (char*)&dst[idx], size - idx, 0);
++    if (n == 0) {
++      throw std::runtime_error("Connection closed by peer");
++    }
++    if (n < 0) {
+       switch (getErrno()) {
+         case EAGAIN:
+         case ETIMEDOUT:
+@@ -148,7 +152,9 @@ void PlainConnection::readBlock(const uint8_t* dst, size_t size) {
+           }
+           goto READ;
+         case EINTR:
+-          break;
++          // Interrupted before any byte arrived: retry. The old `break` fell
++          // through to `idx += n` with n = -1 and shifted the whole stream.
++          goto READ;
+         default:
+           if (retries++ > 4)
+             throw std::runtime_error("Error in read");
+diff --git a/cspot/src/ShannonConnection.cpp b/cspot/src/ShannonConnection.cpp
+index ebfe091..780210f 100644
+--- a/cspot/src/ShannonConnection.cpp
++++ b/cspot/src/ShannonConnection.cpp
+@@ -81,7 +81,8 @@ cspot::Packet ShannonConnection::recvPacket() {
+   this->recvCipher->finish(mac2);
+ 
+   if (mac != mac2) {
+-    CSPOT_LOG(error, "Shannon read: Mac doesn't match");
++    CSPOT_LOG(error, "Shannon read: Mac doesn't match (cmd 0x%02x, %d bytes)",
++              data[0], (int)readSize);
+   }
+ 
+   // Update the nonce

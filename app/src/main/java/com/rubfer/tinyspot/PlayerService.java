@@ -39,6 +39,8 @@ public class PlayerService extends Service implements NativePlayer.Listener {
         String artist = "";
         int durationMs;
         String error;
+        /** "uri\tname\n" lines, null until loaded. */
+        String playlists;
     }
 
     interface UiListener {
@@ -99,26 +101,30 @@ public class PlayerService extends Service implements NativePlayer.Listener {
     }
 
     /**
-     * Wear OS routes traffic through the phone over Bluetooth and turns Wi-Fi
-     * off when it can. Ask for Wi-Fi explicitly and bind the whole process
-     * (native sockets included) to it.
+     * Wear OS routes traffic through the phone over Bluetooth and powers the
+     * radios down when it can. Ask for a direct link (Wi-Fi or LTE, never the
+     * Bluetooth proxy) and bind the whole process, native sockets included.
+     * When the bound network drops, cspot's session reconnects on the next one.
      */
     private void requestWifi() {
         NetworkRequest req = new NetworkRequest.Builder()
                 .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
+                .addTransportType(NetworkCapabilities.TRANSPORT_CELLULAR)
                 .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
                 .build();
         wifiCallback = new ConnectivityManager.NetworkCallback() {
             @Override
             public void onAvailable(Network network) {
-                Log.i(TAG, "Wi-Fi available, binding process to it");
+                NetworkCapabilities caps = cm.getNetworkCapabilities(network);
+                boolean wifi = caps != null && caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI);
+                Log.i(TAG, (wifi ? "Wi-Fi" : "LTE") + " available, binding process to it");
                 cm.bindProcessToNetwork(network);
                 main.post(() -> startNative());
             }
 
             @Override
             public void onLost(Network network) {
-                Log.w(TAG, "Wi-Fi lost");
+                Log.w(TAG, "network lost");
             }
         };
         cm.requestNetwork(req, wifiCallback);
@@ -195,6 +201,7 @@ public class PlayerService extends Service implements NativePlayer.Listener {
         switch (type) {
             case NativePlayer.EV_AUTH_STATE:
                 state.auth = arg;
+                if (arg == 2 && state.playlists == null) NativePlayer.nativeRequestPlaylists();
                 if (arg == 3) prefs().edit().remove("credentials").apply();
                 break;
             case NativePlayer.EV_PLAYBACK_STATE:
@@ -207,6 +214,9 @@ public class PlayerService extends Service implements NativePlayer.Listener {
                 state.durationMs = arg;
                 break;
             }
+            case NativePlayer.EV_PLAYLISTS:
+                state.playlists = arg == 1 ? text : "";
+                break;
             case NativePlayer.EV_ERROR:
                 state.error = text;
                 Log.w(TAG, "native error: " + text);

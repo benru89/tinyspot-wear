@@ -1,0 +1,28 @@
+From 3010349b465560fdc00e8b07f9a921eb060e3ea8 Mon Sep 17 00:00:00 2001
+From: philippe44 <philippe44@users.noreply.github.com>
+Date: Wed, 5 Aug 2026 00:23:15 +0200
+Subject: [PATCH] pb_encode multiple instances issue with a static trackRef
+
+---
+ cspot/src/TrackReference.cpp | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/cspot/src/TrackReference.cpp b/cspot/src/TrackReference.cpp
+index 314c31a..b4fafcb 100644
+--- a/cspot/src/TrackReference.cpp
++++ b/cspot/src/TrackReference.cpp
+@@ -43,7 +43,11 @@ bool TrackReference::pbEncodeTrackList(pb_ostream_t* stream,
+   // concurrent rebuild cannot reallocate the vector under us
+   std::scoped_lock lock(*locked->mutex);
+   auto& trackQueue = *locked->tracks;
++#ifdef ESP_PLATFORM  
+   static TrackRef msg = TrackRef_init_zero;
++#else  
++  TrackRef msg = TrackRef_init_zero;
++#endif
+ 
+   // Prepare nanopb callbacks
+   msg.context.funcs.encode = &bell::nanopb::encodeString;
+-- 
+2.43.0
+

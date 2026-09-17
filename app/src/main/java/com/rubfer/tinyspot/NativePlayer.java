@@ -10,6 +10,7 @@ final class NativePlayer {
     static final int EV_POSITION = 5;        // arg: position ms
     static final int EV_VOLUME = 6;          // arg: 0..65535
     static final int EV_ERROR = 7;           // text: message
+    static final int EV_PLAYLISTS = 8;       // text: "uri\tname\n"...; arg: 1 ok
 
     interface Listener {
         /** Called on a native thread. */
@@ -39,6 +40,10 @@ final class NativePlayer {
     /** Starts the zeroconf HTTP endpoint; returns the port, 0 on failure. */
     static native int nativeStartDiscovery(int port);
     static native void nativeLogin(String credentialsJson);
+    /** Replies with EV_PLAYLISTS. */
+    static native void nativeRequestPlaylists();
+    /** Plays a playlist URI, resolved on the watch. */
+    static native void nativePlayContext(String contextUri, boolean shuffle);
     static native void nativePause();
     static native void nativeResume();
     static native void nativeNext();

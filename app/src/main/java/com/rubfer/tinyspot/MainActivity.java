@@ -24,6 +24,8 @@ public class MainActivity extends Activity implements PlayerService.UiListener {
         track = findViewById(R.id.track);
         playPause = findViewById(R.id.play_pause);
 
+        findViewById(R.id.library).setOnClickListener(
+                v -> startActivity(new android.content.Intent(this, LibraryActivity.class)));
         findViewById(R.id.prev).setOnClickListener(v -> NativePlayer.nativePrevious());
         findViewById(R.id.next).setOnClickListener(v -> NativePlayer.nativeNext());
         playPause.setOnClickListener(v -> {
@@ -32,6 +34,22 @@ public class MainActivity extends Activity implements PlayerService.UiListener {
         });
 
         PlayerService.start(this);
+
+        debugPlay(getIntent());
+    }
+
+    @Override
+    protected void onNewIntent(android.content.Intent intent) {
+        super.onNewIntent(intent);
+        debugPlay(intent);
+    }
+
+    /** adb testing: am start -n .../.MainActivity --es play URI [--ez shuffle true] */
+    private static void debugPlay(android.content.Intent intent) {
+        String play = intent.getStringExtra("play");
+        if (BuildConfig.DEBUG && play != null) {
+            NativePlayer.nativePlayContext(play, intent.getBooleanExtra("shuffle", false));
+        }
     }
 
     // Only listen while visible: no UI work with the screen off.

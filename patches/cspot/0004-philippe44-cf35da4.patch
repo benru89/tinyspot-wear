@@ -1,0 +1,291 @@
+From cf35da43a83d26b0790aaea4c4498959b1de0085 Mon Sep 17 00:00:00 2001
+From: 007hacky007 <007hacky007@users.noreply.github.com>
+Date: Sun, 19 Jul 2026 12:42:14 +0200
+Subject: [PATCH] SpircHandler: only advance the queue for the entry that
+ actually started
+
+notifyAudioReachedPlayback() advanced the track queue blindly: it
+either consumed the notifyPending flag or popped the queue head,
+without checking which track the notification was actually for. A
+notification from a stream created before the last queue rebuild (it
+races the player reload that follows a Load frame, e.g. when another
+Connect controller changes tracks) consumed the notifyPending meant for
+the new head. From then on every legitimate track start popped the
+queue one entry early, TrackPlayer's previous-track pointer was never
+found in preloadedTracks again, and every EOF restarted playback from
+position 0 via trackLoaded(), cutting off everything still buffered in
+the renderer. There is no resync path, so playback stayed corrupted
+(every song cut short, UI one track ahead of the audio) until the
+process was restarted.
+
+Two ingredients make the validation sound:
+
+- Queue entries get an identity, not just a file id: a process-unique
+  sequence number is appended to the identifier at construction. A file
+  id alone cannot prove which playback instance started (same track
+  queued twice in a row, PREV restarting the current track as a new
+  object), and as a bonus integrations that detect track boundaries by
+  identifier change now see one for consecutive plays of the same file.
+
+- Validation and advancement are one atomic queue transaction:
+  TrackQueue::notifyTrackReached() checks the identifier against the
+  head (pending-notify case) or the head's successor (advance case) and
+  performs the pop under a single tracksMutex hold, so a Load/Replace
+  frame rebuilding the queue from the mercury thread cannot interleave
+  between check and pop.
+
+Callers that cannot identify the playing track (flow mode, spotraop,
+the CLI player) pass an empty identifier and keep the legacy behavior;
+the parameter is a std::string_view with an empty default, so untouched
+call sites neither change behavior nor allocate.
+---
+ cspot/include/SpircHandler.h |  7 ++--
+ cspot/include/TrackQueue.h   | 20 ++++++++++
+ cspot/src/SpircHandler.cpp   | 40 ++++++++++----------
+ cspot/src/TrackQueue.cpp     | 72 ++++++++++++++++++++++++++++++++++--
+ 4 files changed, 114 insertions(+), 25 deletions(-)
+
+diff --git a/cspot/include/SpircHandler.h b/cspot/include/SpircHandler.h
+index 7d558cd..7b58c65 100644
+--- a/cspot/include/SpircHandler.h
++++ b/cspot/include/SpircHandler.h
+@@ -3,8 +3,9 @@
+ #include <stdint.h>    // for uint32_t, uint8_t
+ #include <functional>  // for function
+ #include <memory>      // for shared_ptr, unique_ptr
+-#include <string>      // for string
+-#include <variant>     // for variant
++#include <string>       // for string
++#include <string_view>  // for string_view
++#include <variant>      // for variant
+ #include <vector>      // for vector
+ 
+ #include "CDNAudioFile.h"  // for CDNTrackStream, CDNTrackStream::Track...
+@@ -52,7 +53,7 @@ class SpircHandler {
+ 
+   bool nextSong();
+ 
+-  void notifyAudioReachedPlayback();
++  void notifyAudioReachedPlayback(std::string_view identifier = {});
+   void notifyAudioEnded();
+   void updatePositionMs(uint32_t position);
+   void setRemoteVolume(int volume);
+diff --git a/cspot/include/TrackQueue.h b/cspot/include/TrackQueue.h
+index 8e2f0c3..f7881c1 100644
+--- a/cspot/include/TrackQueue.h
++++ b/cspot/include/TrackQueue.h
+@@ -5,6 +5,7 @@
+ #include <deque>
+ #include <functional>
+ #include <mutex>
++#include <string_view>
+ 
+ #include "BellTask.h"
+ #include "PlaybackState.h"
+@@ -77,6 +78,10 @@ class QueuedTrack {
+  private:
+   std::shared_ptr<cspot::Context> ctx;
+ 
++  // Distinguishes this queue entry from any other entry for the same file
++  // (same track queued twice, or the same track re-queued by a PREV restart)
++  uint32_t instanceSeq;
++
+   uint64_t pendingMercuryRequest = 0;
+   uint32_t pendingAudioKeyRequest = 0;
+ 
+@@ -92,6 +97,9 @@ class TrackQueue : public bell::Task {
+ 
+   enum class SkipDirection { NEXT, PREV };
+ 
++  // Outcome of a "track reached playback" notification
++  enum class Reached { IGNORED, CONSUMED_PENDING, ADVANCED };
++
+   std::shared_ptr<bell::WrappedSemaphore> playableSemaphore;
+   std::atomic<bool> notifyPending = false;
+ 
+@@ -106,6 +114,17 @@ class TrackQueue : public bell::Task {
+   std::shared_ptr<QueuedTrack> consumeTrack(
+       std::shared_ptr<QueuedTrack> prevSong, int& offset);
+ 
++  /* Atomically validate a "track reached playback" notification against the
++   * queue and advance it when appropriate. Validation and advancement must
++   * happen under a single tracksMutex hold: a Load/Replace frame can rebuild
++   * the queue from the mercury thread at any moment, and a decision taken on
++   * a stale snapshot would pop the rebuilt queue one entry early. `current`
++   * receives the up-to-date head unless the notification was ignored. An
++   * empty identifier skips validation (callers that cannot identify the
++   * playing track, e.g. flow mode). */
++  Reached notifyTrackReached(std::string_view identifier,
++                             std::shared_ptr<QueuedTrack>& current);
++
+  private:
+   static const int MAX_TRACKS_PRELOAD = 3;
+ 
+@@ -130,5 +149,6 @@ class TrackQueue : public bell::Task {
+ 
+   void processTrack(std::shared_ptr<QueuedTrack> track);
+   bool queueNextTrack(int offset = 0, uint32_t positionMs = 0);
++  bool skipTrackUnlocked(SkipDirection dir, bool expectNotify);
+ };
+ }  // namespace cspot
+diff --git a/cspot/src/SpircHandler.cpp b/cspot/src/SpircHandler.cpp
+index 8d8add6..db96275 100644
+--- a/cspot/src/SpircHandler.cpp
++++ b/cspot/src/SpircHandler.cpp
+@@ -85,26 +85,28 @@ void SpircHandler::notifyAudioEnded() {
+   trackPlayer->resetState(true);
+ }
+ 
+-void SpircHandler::notifyAudioReachedPlayback() {
+-  int offset = 0;
+-
+-  // get HEAD track
+-  auto currentTrack = trackQueue->consumeTrack(nullptr, offset);
+-
+-  // Do not execute when meta is already updated
+-  if (trackQueue->notifyPending) {
+-    trackQueue->notifyPending = false;
+-
+-    playbackState->updatePositionMs(currentTrack->requestedPosition);
+-
+-    // Reset position in queued track
+-    currentTrack->requestedPosition = 0;
+-  } else {
+-    trackQueue->skipTrack(TrackQueue::SkipDirection::NEXT, false);
+-    playbackState->updatePositionMs(0);
++void SpircHandler::notifyAudioReachedPlayback(std::string_view identifier) {
++  std::shared_ptr<QueuedTrack> currentTrack;
++
++  /* Validation and queue advancement happen as one atomic operation inside
++   * TrackQueue: a Load/Replace frame can rebuild the queue from the mercury
++   * thread at any moment, and a stale notification (e.g. from a stream that
++   * predates the rebuild) must neither consume the pending notify nor pop the
++   * queue one track early - that desyncs playback with no way to resync.
++   * Callers that cannot identify the playing track (flow mode) pass an empty
++   * identifier and keep the legacy behavior. */
++  switch (trackQueue->notifyTrackReached(identifier, currentTrack)) {
++    case TrackQueue::Reached::IGNORED:
++      return;
++    case TrackQueue::Reached::CONSUMED_PENDING:
++      playbackState->updatePositionMs(currentTrack->requestedPosition);
+ 
+-    // we moved to next track, re-acquire currentTrack again
+-    currentTrack = trackQueue->consumeTrack(nullptr, offset);
++      // Reset position in queued track
++      currentTrack->requestedPosition = 0;
++      break;
++    case TrackQueue::Reached::ADVANCED:
++      playbackState->updatePositionMs(0);
++      break;
+   }
+ 
+   this->notify();
+diff --git a/cspot/src/TrackQueue.cpp b/cspot/src/TrackQueue.cpp
+index e1a8527..b66dd51 100644
+--- a/cspot/src/TrackQueue.cpp
++++ b/cspot/src/TrackQueue.cpp
+@@ -124,6 +124,12 @@ QueuedTrack::QueuedTrack(TrackReference& ref,
+                          std::shared_ptr<cspot::Context> ctx,
+                          uint32_t requestedPosition)
+     : requestedPosition(requestedPosition), ctx(ctx) {
++  // A file id alone cannot prove which playback instance a notification is
++  // about (same track queued twice, PREV restart), so every queue entry gets
++  // a process-unique sequence number woven into its identifier
++  static std::atomic<uint32_t> seq(0);
++  instanceSeq = ++seq;
++
+   this->ref = ref;
+ 
+   loadedSemaphore = std::make_shared<bell::WrappedSemaphore>();
+@@ -236,8 +242,8 @@ void QueuedTrack::stepParseMetadata(Track* pbTrack, Episode* pbEpisode) {
+     return;
+   }
+ 
+-  // Assign track identifier
+-  identifier = bytesToHexString(fileId);
++  // Assign track identifier, unique per queue entry, not just per file
++  identifier = bytesToHexString(fileId) + "#" + std::to_string(instanceSeq);
+ 
+   state = State::KEY_REQUIRED;
+ }
+@@ -537,9 +543,14 @@ bool TrackQueue::queueNextTrack(int offset, uint32_t positionMs) {
+ }
+ 
+ bool TrackQueue::skipTrack(SkipDirection dir, bool expectNotify) {
+-  bool skipped = true;
+   std::scoped_lock lock(tracksMutex);
+ 
++  return skipTrackUnlocked(dir, expectNotify);
++}
++
++bool TrackQueue::skipTrackUnlocked(SkipDirection dir, bool expectNotify) {
++  bool skipped = true;
++
+   if (dir == SkipDirection::PREV) {
+     uint64_t position =
+         !playbackState->innerFrame.state.has_position_ms
+@@ -586,6 +597,61 @@ bool TrackQueue::skipTrack(SkipDirection dir, bool expectNotify) {
+   return skipped;
+ }
+ 
++TrackQueue::Reached TrackQueue::notifyTrackReached(
++    std::string_view identifier, std::shared_ptr<QueuedTrack>& current) {
++  std::scoped_lock lock(tracksMutex);
++
++  if (currentTracksIndex == -1 || currentTracksIndex >= currentTracks.size() ||
++      preloadedTracks.empty()) {
++    return Reached::IGNORED;
++  }
++
++  // deque may be popped below, keep the head alive
++  auto head = preloadedTracks[0];
++
++  // Do not execute when meta is already updated
++  if (notifyPending) {
++    /* The pending notification belongs to the queue head; a stale streamer
++     * (e.g. one started right before a Load frame rebuilt the queue) must not
++     * consume it, or every later notification pops the queue one track early
++     * and playback never resyncs */
++    if (!identifier.empty() && head->identifier != identifier) {
++      CSPOT_LOG(info, "stale notification for %s while expecting %s => ignored",
++                std::string(identifier).c_str(), head->identifier.c_str());
++      return Reached::IGNORED;
++    }
++    notifyPending = false;
++    current = head;
++    return Reached::CONSUMED_PENDING;
++  }
++
++  if (!identifier.empty()) {
++    if (head->identifier == identifier) {
++      // re-announcement of the entry we already advanced to
++      CSPOT_LOG(info, "duplicate notification for %s => ignored",
++                std::string(identifier).c_str());
++      return Reached::IGNORED;
++    }
++    if (preloadedTracks.size() < 2 ||
++        preloadedTracks[1]->identifier != identifier) {
++      CSPOT_LOG(info, "stale notification for %s while playing %s => ignored",
++                std::string(identifier).c_str(), head->identifier.c_str());
++      return Reached::IGNORED;
++    }
++  }
++
++  skipTrackUnlocked(SkipDirection::NEXT, false);
++
++  // with an empty identifier the skip may fail at the end of the queue; the
++  // legacy behavior is to re-notify the head in that case
++  if (preloadedTracks.empty()) {
++    return Reached::IGNORED;
++  }
++
++  current = preloadedTracks[0];
++  return Reached::ADVANCED;
++}
++
+ bool TrackQueue::hasTracks() {
+   std::scoped_lock lock(tracksMutex);
+ 
+-- 
+2.43.0
+

@@ -1,0 +1,77 @@
+diff --git a/cspot/include/SpircHandler.h b/cspot/include/SpircHandler.h
+index 7b58c65..4132c20 100644
+--- a/cspot/include/SpircHandler.h
++++ b/cspot/include/SpircHandler.h
+@@ -58,6 +58,10 @@ class SpircHandler {
+   void updatePositionMs(uint32_t position);
+   void setRemoteVolume(int volume);
+   void loadTrackFromURI(const std::string& uri);
++  // Start playback of a track list chosen on this device (no remote Load
++  // frame). contextUri is reported to Spotify, e.g. the playlist URI.
++  void loadTracks(const std::vector<std::string>& trackUris, uint32_t index,
++                  const std::string& contextUri);
+   std::shared_ptr<cspot::TrackQueue> getTrackQueue() { return trackQueue; }
+ 
+   void disconnect();
+diff --git a/cspot/src/SpircHandler.cpp b/cspot/src/SpircHandler.cpp
+index db96275..201db28 100644
+--- a/cspot/src/SpircHandler.cpp
++++ b/cspot/src/SpircHandler.cpp
+@@ -1,6 +1,7 @@
+ #include "SpircHandler.h"
+ 
+ #include <cstdint>      // for uint8_t
++#include <cstring>      // for strcpy      // for uint8_t
+ #include <memory>       // for shared_ptr, make_unique, unique_ptr
+ #include <type_traits>  // for remove_extent_t
+ #include <utility>      // for move
+@@ -77,7 +78,48 @@ void SpircHandler::subscribeToMercury() {
+       subscriptionLambda);
+ }
+ 
+-void SpircHandler::loadTrackFromURI(const std::string& uri) {}
++void SpircHandler::loadTrackFromURI(const std::string& uri) {
++  loadTracks({uri}, 0, uri);
++}
++
++void SpircHandler::loadTracks(const std::vector<std::string>& trackUris,
++                              uint32_t index, const std::string& contextUri) {
++  if (trackUris.empty() || index >= trackUris.size()) {
++    return;
++  }
++  this->trackPlayer->start();
++
++  // Same state a remote Load frame would produce
++  playbackState->remoteTracks.clear();
++  for (const auto& uri : trackUris) {
++    TrackReference ref;
++    ref.uri = uri;
++    ref.context = contextUri;
++    ref.decodeURI();
++    // base62 decoding drops leading zero bytes; GIDs are 16 bytes
++    while (ref.gid.size() < 16) {
++      ref.gid.insert(ref.gid.begin(), 0);
++    }
++    playbackState->remoteTracks.push_back(ref);
++  }
++
++  playbackState->setActive(true);
++  playbackState->updatePositionMs(0);
++  playbackState->setPlaybackState(PlaybackState::State::Playing);
++
++  auto& state = playbackState->innerFrame.state;
++  state.context_uri =
++      (char*)realloc(state.context_uri, contextUri.size() + 1);
++  strcpy(state.context_uri, contextUri.c_str());
++  state.has_playing_track_index = true;
++  state.playing_track_index = index;
++
++  CSPOT_LOG(info, "Local load: %d tracks, starting at %d",
++            (int)trackUris.size(), (int)index);
++  trackQueue->updateTracks(0, true);
++  this->notify();
++  trackPlayer->resetState();
++}
+ 
+ void SpircHandler::notifyAudioEnded() {
+   playbackState->updatePositionMs(0);

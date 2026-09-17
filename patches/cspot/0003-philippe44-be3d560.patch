@@ -1,0 +1,83 @@
+From be3d5607bbeb4e045e444f18011c4e113369fecd Mon Sep 17 00:00:00 2001
+From: 007hacky007 <007hacky007@users.noreply.github.com>
+Date: Sun, 19 Jul 2026 12:41:47 +0200
+Subject: [PATCH] TrackQueue: protect queue state against cross-thread mutation
+
+The track queue is accessed from three threads: the mercury/session
+thread (handleFrame -> updateTracks/skipTrack), the TrackPlayer task
+(consumeTrack) and the queue task (runTask/processTrack), plus whatever
+thread the integration notifies track starts from. tracksMutex is meant
+to serialize them, but several paths bypassed it:
+
+- runTask() read currentTracksIndex outside the mutex
+- processTrack() called queueNextTrack(), which mutates preloadedTracks,
+  from the queue task without holding the mutex
+- consumeTrack() indexed preloadedTracks[0] without an empty check, and
+  updateTracks() dereferenced preloadedTracks[0] the same way
+
+Bring those reads and mutations under tracksMutex and guard the two
+empty-deque dereferences. Groundwork for making notification handling a
+single locked queue transaction.
+---
+ cspot/src/TrackQueue.cpp | 22 ++++++++++++++--------
+ 1 file changed, 14 insertions(+), 8 deletions(-)
+
+diff --git a/cspot/src/TrackQueue.cpp b/cspot/src/TrackQueue.cpp
+index 26ec0a2..e1a8527 100644
+--- a/cspot/src/TrackQueue.cpp
++++ b/cspot/src/TrackQueue.cpp
+@@ -413,14 +413,16 @@ void TrackQueue::runTask() {
+     // Make sure we have the newest access key
+     accessKey = accessKeyFetcher->getAccessKey();
+ 
+-    int loadedIndex = currentTracksIndex;
+-
+-    // No tracks loaded yet
+-    if (loadedIndex < 0) {
+-      continue;
+-    } else {
++    {
++      // currentTracksIndex and preloadedTracks are mutated by other threads
++      // under tracksMutex, read them under it as well
+       std::scoped_lock lock(tracksMutex);
+ 
++      // No tracks loaded yet
++      if (currentTracksIndex < 0) {
++        continue;
++      }
++
+       trackQueue = preloadedTracks;
+     }
+ 
+@@ -444,7 +446,8 @@ std::shared_ptr<QueuedTrack> TrackQueue::consumeTrack(
+     std::shared_ptr<QueuedTrack> prevTrack, int& offset) {
+   std::scoped_lock lock(tracksMutex);
+ 
+-  if (currentTracksIndex == -1 || currentTracksIndex >= currentTracks.size()) {
++  if (currentTracksIndex == -1 || currentTracksIndex >= currentTracks.size() ||
++      preloadedTracks.empty()) {
+     return nullptr;
+   }
+ 
+@@ -494,6 +497,9 @@ void TrackQueue::processTrack(std::shared_ptr<QueuedTrack> track) {
+       track->stepLoadCDNUrl(accessKey);
+ 
+       if (track->state == QueuedTrack::State::READY) {
++        // queueNextTrack() mutates preloadedTracks, which other threads
++        // access under tracksMutex; this runs on the queue task
++        std::scoped_lock lock(tracksMutex);
+         if (preloadedTracks.size() < MAX_TRACKS_PRELOAD) {
+           // Queue a new track to preload
+           queueNextTrack(preloadedTracks.size());
+@@ -612,7 +618,7 @@ bool TrackQueue::updateTracks(uint32_t requestedPosition, bool initial) {
+     notifyPending = true;
+ 
+     playableSemaphore->give();
+-  } else if (preloadedTracks[0]->loading) {
++  } else if (!preloadedTracks.empty() && preloadedTracks[0]->loading) {
+     // try to not re-load track if we are still loading it
+ 
+     // remove everything except first track
+-- 
+2.43.0
+

@@ -6,13 +6,13 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <vector>
 
 #include "AndroidAudioSink.h"
 #include "NativeSpotifyPlayer.h"
 
-namespace bell {
-class BellHTTPServer;
-}
+struct mg_context;
+struct mg_connection;
 namespace cspot {
 struct Context;
 class LoginBlob;
@@ -29,6 +29,9 @@ class CspotPlayer : public NativeSpotifyPlayer {
   int startDiscovery(int port) override;
   void loginStored(const std::string& credentialsJson) override;
 
+  void requestPlaylists() override;
+  void playContext(const std::string& contextUri, bool shuffle) override;
+
   void pause() override;
   void resume() override;
   void next() override;
@@ -43,17 +46,29 @@ class CspotPlayer : public NativeSpotifyPlayer {
   void onSpircEvent(int type, int intData, bool boolData, void* trackInfo);
   void workerLoop();
   void emit(Event e, int arg1, const std::string& text = std::string());
+  static int handleZeroconf(mg_connection* conn, void* self);
+  std::string zeroconfInfo();
   std::shared_ptr<cspot::SpircHandler> currentHandler();
+  void loadWindow(size_t start);
 
   PlayerListener* listener;
   std::string deviceName;
   std::shared_ptr<cspot::LoginBlob> discoveryBlob;  // owns the DH keypair
-  std::unique_ptr<bell::BellHTTPServer> http;
+  mg_context* http = nullptr;
   AndroidAudioSink sink;
 
   std::mutex stateMutex;
   std::shared_ptr<cspot::Context> ctx;
   std::shared_ptr<cspot::SpircHandler> handler;
+  std::shared_ptr<class SpotifyLibrary> library;
+
+  // Locally started context. cspot re-sends its whole queue in every Spirc
+  // notify, so only a window of it is loaded at a time.
+  static constexpr size_t kWindow = 100;
+  std::string contextUri;
+  std::vector<std::string> contextTracks;
+  size_t windowStart = 0;
+  bool localContext = false;
   std::thread sessionThread;
   std::atomic<bool> running{false};
   std::atomic<bool> sessionActive{false};

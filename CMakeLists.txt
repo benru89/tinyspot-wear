@@ -6,19 +6,26 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 set(TP ${CMAKE_CURRENT_SOURCE_DIR}/third_party)
 
-# Local fixes to pinned third-party code live in patches/<submodule>/*.patch and
-# are applied once (a reverse-apply check makes this idempotent).
+# Local fixes to pinned third-party code live in patches/cspot/*.patch. They
+# are applied in order once; applied names are recorded in a stamp file in the
+# submodule (patches that touch the same files can't be reverse-checked alone).
 file(GLOB CSPOT_PATCHES ${CMAKE_CURRENT_SOURCE_DIR}/patches/cspot/*.patch)
 list(SORT CSPOT_PATCHES)
+set(PATCH_STAMP ${TP}/cspot/.tinyspot-patches)
+set(APPLIED "")
+if(EXISTS ${PATCH_STAMP})
+  file(STRINGS ${PATCH_STAMP} APPLIED)
+endif()
 foreach(p ${CSPOT_PATCHES})
-  execute_process(COMMAND git apply --reverse --check ${p}
-                  WORKING_DIRECTORY ${TP}/cspot RESULT_VARIABLE already OUTPUT_QUIET ERROR_QUIET)
-  if(NOT already EQUAL 0)
-    execute_process(COMMAND git apply ${p} WORKING_DIRECTORY ${TP}/cspot RESULT_VARIABLE rc)
+  get_filename_component(name ${p} NAME)
+  if(NOT name IN_LIST APPLIED)
+    execute_process(COMMAND git apply --whitespace=nowarn ${p}
+                    WORKING_DIRECTORY ${TP}/cspot RESULT_VARIABLE rc)
     if(NOT rc EQUAL 0)
       message(FATAL_ERROR "failed to apply ${p}")
     endif()
-    message(STATUS "applied ${p}")
+    file(APPEND ${PATCH_STAMP} "${name}\n")
+    message(STATUS "applied ${name}")
   endif()
 endforeach()
 
@@ -59,6 +66,7 @@ set(BELL_DISABLE_REGEX ON CACHE BOOL "" FORCE)
 set(BELL_DISABLE_AVAHI ON CACHE BOOL "" FORCE)
 set(PROTOBUF_PROTOC_EXECUTABLE ${CMAKE_CURRENT_SOURCE_DIR}/tools/protoc CACHE FILEPATH "" FORCE)
 add_subdirectory(${TP}/cspot/cspot ${CMAKE_BINARY_DIR}/cspot EXCLUDE_FROM_ALL)
+target_compile_definitions(bell PRIVATE USE_IPV6)  # civetweb: dual-stack zeroconf
 
 # ---------------------------------------------------------------------------
 # libtinyspot.so
@@ -67,6 +75,7 @@ add_library(tinyspot SHARED
   native/jni_bridge.cpp
   native/CspotPlayer.cpp
   native/AndroidAudioSink.cpp
+  native/SpotifyLibrary.cpp
 )
 target_include_directories(tinyspot PRIVATE native)
 target_compile_options(tinyspot PRIVATE -Wall -Wextra -Wno-unused-parameter)
