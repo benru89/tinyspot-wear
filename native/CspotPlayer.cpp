@@ -174,6 +174,12 @@ void CspotPlayer::sessionLoop(std::shared_ptr<cspot::LoginBlob> blob) {
       emit(Event::ERROR, 0, "audio output unavailable");
     }
 
+    // Track info over HTTP; cspot falls back to mercury if this returns empty.
+    auto sp = std::make_shared<SpClient>(c);
+    c->metadataProvider = [sp](const std::string& uri, bool isEpisode) {
+      return sp->metadata(uri, isEpisode);
+    };
+
     auto h = std::make_shared<SpircHandler>(c);
     h->getTrackPlayer()->setDataCallback(
         [this](uint8_t* data, size_t bytes, std::string_view trackId) {
@@ -193,7 +199,7 @@ void CspotPlayer::sessionLoop(std::shared_ptr<cspot::LoginBlob> blob) {
       std::lock_guard<std::mutex> lock(stateMutex);
       ctx = c;
       handler = h;
-      library = std::make_shared<SpotifyLibrary>(std::make_shared<SpClient>(c));
+      library = std::make_shared<SpotifyLibrary>(sp);
       username = c->config.username;
     }
     c->session->startTask();

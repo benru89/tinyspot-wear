@@ -1,0 +1,61 @@
+diff --git a/cspot/include/CSpotContext.h b/cspot/include/CSpotContext.h
+index d4fdde8..540e73b 100644
+--- a/cspot/include/CSpotContext.h
++++ b/cspot/include/CSpotContext.h
+@@ -1,7 +1,10 @@
+ #pragma once
+ 
+ #include <stdint.h>
++#include <functional>
+ #include <memory>
++#include <string>
++#include <vector>
+ 
+ #include "Crypto.h"
+ #include "LoginBlob.h"
+@@ -19,6 +22,13 @@
+ 
+ namespace cspot {
+ struct Context {
++  // Optional: fetch raw Track/Episode protobuf for a "spotify:track:<base62>"
++  // URI over HTTP instead of Mercury (hm://metadata/3 is being retired).
++  // Returns empty on failure, in which case Mercury is used.
++  using MetadataProvider =
++      std::function<std::vector<uint8_t>(const std::string& uri, bool isEpisode)>;
++  MetadataProvider metadataProvider = nullptr;
++
+   struct ConfigState {
+     // Setup default bitrate to 160
+     AudioFormat audioFormat = AudioFormat::AudioFormat_OGG_VORBIS_160;
+diff --git a/cspot/src/TrackQueue.cpp b/cspot/src/TrackQueue.cpp
+index 379c230..61c9166 100644
+--- a/cspot/src/TrackQueue.cpp
++++ b/cspot/src/TrackQueue.cpp
+@@ -329,6 +329,27 @@ void QueuedTrack::stepLoadMetadata(
+     Track* pbTrack, Episode* pbEpisode, std::mutex& trackListMutex,
+     std::shared_ptr<bell::WrappedSemaphore> updateSemaphore) {
+ 
++  bool isEpisode = ref.type != TrackReference::Type::TRACK;
++
++  // Preferred path: HTTP metadata, when the platform provided a fetcher.
++  if (ctx->metadataProvider) {
++    auto raw = ctx->metadataProvider(ref.uri, isEpisode);
++    if (!raw.empty()) {
++      std::scoped_lock lock(trackListMutex);
++      if (!isEpisode) {
++        pb_release(Track_fields, pbTrack);
++        pbDecode(*pbTrack, Track_fields, raw);
++      } else {
++        pb_release(Episode_fields, pbEpisode);
++        pbDecode(*pbEpisode, Episode_fields, raw);
++      }
++      stepParseMetadata(pbTrack, pbEpisode);
++      updateSemaphore->give();
++      return;
++    }
++    CSPOT_LOG(info, "HTTP metadata unavailable, falling back to mercury");
++  }
++
+   // Prepare request ID
+   std::string requestUrl = string_format(
+       "hm://metadata/3/%s/%s",

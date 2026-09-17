@@ -21,10 +21,14 @@ class SpClient {
   explicit SpClient(std::shared_ptr<cspot::Context> ctx);
   ~SpClient();
 
-  // Response body; empty on any failure (bell's client exposes no status).
+  // Response body; empty on any failure (non-200 included).
   std::string get(const std::string& path, const std::string& accept = "application/x-protobuf");
   std::string post(const std::string& path, const std::string& body,
                    const std::string& contentType = "application/x-protobuf");
+
+  // Raw Track/Episode protobuf for a spotify:track:/spotify:episode: URI,
+  // via extended-metadata (hm://metadata/3's replacement). Empty on failure.
+  std::vector<uint8_t> metadata(const std::string& uri, bool isEpisode);
 
  private:
   bool ensureBaseUrl();

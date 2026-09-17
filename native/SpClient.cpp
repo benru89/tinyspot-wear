@@ -141,6 +141,31 @@ std::string SpClient::request(bool post, const std::string& path, const std::str
   }
 }
 
+std::vector<uint8_t> SpClient::metadata(const std::string& uri, bool isEpisode) {
+  // BatchedEntityRequest{2: EntityRequest{1: uri, 2: ExtensionQuery{1: kind}}}
+  // kind: TRACK_V4 = 10, EPISODE_V4 = 12 (extension_kind.proto)
+  pb::Writer query;
+  query.varint(1, isEpisode ? 12 : 10);
+  pb::Writer entity;
+  entity.bytes(1, uri).message(2, query);
+  pb::Writer request;
+  request.message(2, entity);
+
+  std::string reply = post("/extended-metadata/v0/extended-metadata", request.out);
+  if (reply.empty()) return {};
+
+  // BatchedExtensionResponse{2: EntityExtensionDataArray{3: EntityExtensionData
+  // {3: google.protobuf.Any{2: value}}}}
+  std::string_view any =
+      pb::field(pb::field(pb::field(reply, 2), 3), 3);
+  std::string_view value = pb::field(any, 2);
+  if (value.empty()) {
+    LOGE("extended-metadata: no payload for %s (%zu bytes)", uri.c_str(), reply.size());
+    return {};
+  }
+  return std::vector<uint8_t>(value.begin(), value.end());
+}
+
 std::string SpClient::get(const std::string& path, const std::string& accept) {
   return request(false, path, {}, accept);
 }
