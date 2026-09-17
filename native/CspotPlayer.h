@@ -51,6 +51,7 @@ class CspotPlayer : public NativeSpotifyPlayer {
   void workerLoop();
   void emit(Event e, int arg1, const std::string& text = std::string());
   static int handleZeroconf(mg_connection* conn, void* self);
+  void stopDiscovery();
   std::string zeroconfInfo();
   std::shared_ptr<cspot::SpircHandler> currentHandler();
   void loadWindow(size_t start);
@@ -61,6 +62,7 @@ class CspotPlayer : public NativeSpotifyPlayer {
   std::string deviceName;
   std::shared_ptr<cspot::LoginBlob> discoveryBlob;  // owns the DH keypair
   mg_context* http = nullptr;
+  int discoveryPort = 0;
   AndroidAudioSink sink;
 
   std::mutex stateMutex;

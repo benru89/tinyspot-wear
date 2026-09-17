@@ -62,6 +62,7 @@ int CspotPlayer::startDiscovery(int port) {
     return 0;
   }
   mg_set_request_handler(http, "/spotify_info", &CspotPlayer::handleZeroconf, this);
+  discoveryPort = port;
   LOGI("zeroconf endpoint on port %d (IPv4+IPv6)", port);
   return port;
 }
@@ -243,11 +244,25 @@ bool CspotPlayer::runSession(std::shared_ptr<cspot::LoginBlob> blob) {
 }
 
 
+void CspotPlayer::stopDiscovery() {
+  if (!http) return;
+  mg_stop(http);
+  http = nullptr;
+}
+
 void CspotPlayer::networkChanged() {
-  std::lock_guard<std::mutex> lock(stateMutex);
-  if (ctx) {
-    LOGI("network changed, dropping the session socket");
-    ctx->session->close();
+  {
+    std::lock_guard<std::mutex> lock(stateMutex);
+    if (ctx) {
+      LOGI("network changed, dropping the session socket");
+      ctx->session->close();
+    }
+  }
+  // Re-listen on the new network: a socket created on the previous one stops
+  // accepting connections once that network is gone.
+  if (int port = discoveryPort) {
+    stopDiscovery();
+    startDiscovery(port);
   }
 }
 
@@ -457,10 +472,7 @@ void CspotPlayer::setVolume(int v) {
 void CspotPlayer::shutdown() {
   running = false;
   if (sessionThread.joinable()) sessionThread.join();
-  if (http) {
-    mg_stop(http);
-    http = nullptr;
-  }
+  stopDiscovery();
   {
     std::lock_guard<std::mutex> l(workMutex);
     workerStop = true;

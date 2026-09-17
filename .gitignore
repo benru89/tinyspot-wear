@@ -5,3 +5,5 @@ app/.cxx/
 .venv/
 local.properties
 *.apk
+build-review/
+build-warn/

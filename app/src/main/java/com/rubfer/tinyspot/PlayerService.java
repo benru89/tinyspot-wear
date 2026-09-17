@@ -111,10 +111,7 @@ public class PlayerService extends Service implements NativePlayer.Listener {
     @Override
     public void onDestroy() {
         unregisterNsd();
-        if (wifiCallback != null) {
-            cm.bindProcessToNetwork(null);
-            cm.unregisterNetworkCallback(wifiCallback);
-        }
+        if (wifiCallback != null) cm.unregisterNetworkCallback(wifiCallback);
         NativePlayer.setListener(null);
         if (media != null) media.release();
         if (nativeStarted) NativePlayer.nativeShutdown();
@@ -122,10 +119,13 @@ public class PlayerService extends Service implements NativePlayer.Listener {
     }
 
     /**
-     * Wear OS routes traffic through the phone over Bluetooth and powers the
-     * radios down when it can. Ask for a direct link (Wi-Fi or LTE, never the
-     * Bluetooth proxy) and bind the whole process, native sockets included.
-     * When the bound network drops, cspot's session reconnects on the next one.
+     * Wear OS powers the radios down when it can, so hold a request for a
+     * direct link (Wi-Fi or LTE) to keep one up. We deliberately do NOT
+     * bindProcessToNetwork: a bound socket keeps the mark of the network it
+     * was created on, and this watch re-creates its Wi-Fi network constantly.
+     * The zeroconf listener then stayed "listening" on a dead network and the
+     * Spotify app could no longer fetch device info, and reconnects failed
+     * for the same reason. Unbound sockets follow the current default network.
      */
     private void requestWifi() {
         NetworkRequest req = new NetworkRequest.Builder()
@@ -138,8 +138,7 @@ public class PlayerService extends Service implements NativePlayer.Listener {
             public void onAvailable(Network network) {
                 NetworkCapabilities caps = cm.getNetworkCapabilities(network);
                 boolean wifi = caps != null && caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI);
-                Log.i(TAG, (wifi ? "Wi-Fi" : "LTE") + " available, binding process to it");
-                cm.bindProcessToNetwork(network);
+                Log.i(TAG, (wifi ? "Wi-Fi" : "LTE") + " available");
                 boolean switched = boundNetwork != null && !boundNetwork.equals(network);
                 boundNetwork = network;
                 main.post(() -> {
