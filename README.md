@@ -29,11 +29,12 @@ open: phone off, LTE, and Wi-Fi/LTE handover.
 |---|---|
 | APK | 1.04 MB (`libtinyspot.so` ~1.01 MB, `classes.dex` 16 KB) |
 | RAM idle (logged in) | 8.9 MB PSS |
-| RAM playing | 12-16 MB PSS (native heap 4.3 MB) |
+| RAM playing | ~15.6 MB PSS (2.6 MB of that is the audio buffer) |
 | CPU idle, logged in, screen off | 0.1 % of one core |
-| CPU playing, screen off | 3.5 % of one core, measured over 3 min |
+| CPU playing, screen off | 3.5-3.9 % of one core, measured over 3-5 min |
 | Wake locks | none held by the app |
-| Audio | 44.1 kHz s16 stereo, 4096-frame OpenSL ES buffers (~11 wakeups/s), 172 KB ring buffer |
+| Audio | 44.1 kHz s16 stereo, 4096-frame OpenSL ES buffers (~11 wakeups/s), 15 s ring buffer with 1.5 s prefill |
+| Underruns | 0 in 5 min (was 41 in a comparable run with a 1 s buffer) |
 | Playback with the screen off | survived 60/60 samples over 10 min |
 
 ## Architecture

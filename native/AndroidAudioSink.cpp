@@ -13,13 +13,13 @@
 
 namespace tinyspot {
 
-AndroidAudioSink::AndroidAudioSink()
-    : ring(kRingBytes), outBuf(kCallbackFrames * kFrameBytes) {}
+AndroidAudioSink::AndroidAudioSink() : outBuf(kCallbackFrames * kFrameBytes) {}
 
 AndroidAudioSink::~AndroidAudioSink() { close(); }
 
 bool AndroidAudioSink::open(TrackReachedFn onTrackReached, DrainedFn onDrained) {
   if (engineObj) return playerObj != nullptr;
+  ring.assign(kRingBytes, 0);
   trackReached = std::move(onTrackReached);
   drained = std::move(onDrained);
 
@@ -66,8 +66,8 @@ bool AndroidAudioSink::open(TrackReachedFn onTrackReached, DrainedFn onDrained) 
   (*playerObj)->GetInterface(playerObj, SL_IID_ANDROIDSIMPLEBUFFERQUEUE, &queue);
   (*queue)->RegisterCallback(queue, bufferQueueCallback, this);
 
-  LOGI("OpenSL ES ready: 44100 Hz s16 stereo, %zu-frame buffers, %zu KB ring",
-       kCallbackFrames, kRingBytes / 1024);
+  LOGI("OpenSL ES ready: 44100 Hz s16 stereo, %zu-frame buffers, %zus (%zu KB) ring",
+       kCallbackFrames, kBufferSeconds, kRingBytes / 1024);
   return true;
 }
 
@@ -81,26 +81,36 @@ void AndroidAudioSink::close() {
   }
   if (mixObj) (*mixObj)->Destroy(mixObj), mixObj = nullptr;
   if (engineObj) (*engineObj)->Destroy(engineObj), engineObj = nullptr;
+  ring.clear();
+  ring.shrink_to_fit();
 }
 
 size_t AndroidAudioSink::write(const uint8_t* pcm, size_t bytes, size_t trackKey) {
-  std::lock_guard<std::mutex> lock(ringMutex);
-  size_t n = std::min(bytes, kRingBytes - fill);
-  n -= n % kFrameBytes;
-  if (n == 0) return 0;
+  bool prefilled = false;
+  size_t n;
+  {
+    std::lock_guard<std::mutex> lock(ringMutex);
+    n = std::min(bytes, kRingBytes - fill);
+    n -= n % kFrameBytes;
+    if (n == 0) return 0;
 
-  if (trackKey != lastWriteKey) {
-    lastWriteKey = trackKey;
-    markerAt = totalWritten;
+    if (trackKey != lastWriteKey) {
+      lastWriteKey = trackKey;
+      markers.push_back(totalWritten);
+    }
+    draining = false;
+
+    size_t writePos = (readPos + fill) % kRingBytes;
+    size_t first = std::min(n, kRingBytes - writePos);
+    memcpy(ring.data() + writePos, pcm, first);
+    memcpy(ring.data(), pcm + first, n - first);
+    fill += n;
+    totalWritten += n;
+    prefilled = fill >= kPrefillBytes;
   }
-  draining = false;
 
-  size_t writePos = (readPos + fill) % kRingBytes;
-  size_t first = std::min(n, kRingBytes - writePos);
-  memcpy(ring.data() + writePos, pcm, first);
-  memcpy(ring.data(), pcm + first, n - first);
-  fill += n;
-  totalWritten += n;
+  // Enough buffered: let the device start.
+  if (prefilled && waitingForPrefill.exchange(false)) startOutput();
   return n;
 }
 
@@ -123,8 +133,8 @@ void AndroidAudioSink::onBufferNeeded() {
 
     uint64_t before = totalRead;
     totalRead += got;
-    if (markerAt != UINT64_MAX && markerAt >= before && markerAt < totalRead) {
-      markerAt = UINT64_MAX;
+    while (!markers.empty() && markers.front() >= before && markers.front() < totalRead) {
+      markers.pop_front();
       reached = true;
     }
     if (got < want && totalWritten > 0 && !draining) {
@@ -147,24 +157,55 @@ void AndroidAudioSink::onBufferNeeded() {
 }
 
 void AndroidAudioSink::setPlaying(bool p) {
-  if (!play || playing.exchange(p) == p) return;
-  (*play)->SetPlayState(play, p ? SL_PLAYSTATE_PLAYING : SL_PLAYSTATE_PAUSED);
-  if (p) {
-    SLAndroidSimpleBufferQueueState st;
-    (*queue)->GetState(queue, &st);
-    if (st.count == 0) onBufferNeeded();  // (re)start the callback chain
+  if (!play) return;
+  if (!p) {
+    waitingForPrefill = false;
+    if (!playing.exchange(false)) return;
+    (*play)->SetPlayState(play, SL_PLAYSTATE_PAUSED);
+    LOGI("output paused");
+    return;
   }
-  LOGI("output %s", p ? "playing" : "paused");
+  if (playing) return;
+
+  size_t buffered;
+  {
+    std::lock_guard<std::mutex> lock(ringMutex);
+    buffered = fill;
+  }
+  if (buffered < kPrefillBytes) {
+    waitingForPrefill = true;  // write() starts us once there is a cushion
+    LOGI("buffering %zu/%zu KB before starting", buffered / 1024, kPrefillBytes / 1024);
+    return;
+  }
+  startOutput();
+}
+
+void AndroidAudioSink::startOutput() {
+  if (!play || playing.exchange(true)) return;
+  (*play)->SetPlayState(play, SL_PLAYSTATE_PLAYING);
+  SLAndroidSimpleBufferQueueState st;
+  (*queue)->GetState(queue, &st);
+  if (st.count == 0) onBufferNeeded();  // (re)start the callback chain
+  LOGI("output playing");
 }
 
 void AndroidAudioSink::flush() {
-  std::lock_guard<std::mutex> lock(ringMutex);
-  readPos = 0;
-  fill = 0;
-  totalRead = totalWritten = 0;
-  lastWriteKey = 0;
-  markerAt = UINT64_MAX;
-  draining = false;
+  bool wasPlaying = playing;
+  {
+    std::lock_guard<std::mutex> lock(ringMutex);
+    readPos = 0;
+    fill = 0;
+    totalRead = totalWritten = 0;
+    lastWriteKey = 0;
+    markers.clear();
+    draining = false;
+  }
+  // The buffer is empty again: hold the device until there is a cushion,
+  // otherwise a seek or track change plays out of an empty ring.
+  if (wasPlaying && playing.exchange(false)) {
+    (*play)->SetPlayState(play, SL_PLAYSTATE_PAUSED);
+    waitingForPrefill = true;
+  }
 }
 
 void AndroidAudioSink::setVolume(int v) {
