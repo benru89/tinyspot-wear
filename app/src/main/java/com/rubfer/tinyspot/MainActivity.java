@@ -13,7 +13,16 @@ public class MainActivity extends Activity implements PlayerService.UiListener {
     private TextView spotify;
     private TextView player;
     private TextView track;
+    private TextView position;
     private ImageButton playPause;
+    private final android.os.Handler ticker = new android.os.Handler();
+    private final Runnable tick = new Runnable() {
+        @Override
+        public void run() {
+            showPosition();
+            ticker.postDelayed(this, 1000);
+        }
+    };
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -22,6 +31,7 @@ public class MainActivity extends Activity implements PlayerService.UiListener {
         spotify = findViewById(R.id.spotify);
         player = findViewById(R.id.player);
         track = findViewById(R.id.track);
+        position = findViewById(R.id.position);
         playPause = findViewById(R.id.play_pause);
 
         findViewById(R.id.library).setOnClickListener(
@@ -70,16 +80,30 @@ public class MainActivity extends Activity implements PlayerService.UiListener {
     protected void onStart() {
         super.onStart();
         PlayerService.setUiListener(this);
+        ticker.post(tick);   // only while visible: no UI work with the screen off
     }
 
     @Override
     protected void onStop() {
         PlayerService.setUiListener(null);
+        ticker.removeCallbacks(tick);
         super.onStop();
+    }
+
+    private static String mmss(int ms) {
+        int total = Math.max(ms, 0) / 1000;
+        return total / 60 + ":" + (total % 60 < 10 ? "0" : "") + total % 60;
+    }
+
+    private void showPosition() {
+        PlayerService.State s = PlayerService.state;
+        boolean show = s.durationMs > 0 && s.playback != 0;
+        position.setText(show ? mmss(s.currentPositionMs()) + " / " + mmss(s.durationMs) : "");
     }
 
     @Override
     public void onStateChanged(PlayerService.State s) {
+        showPosition();
         spotify.setText(s.auth == 0 && s.error == null
                 ? "Open Spotify → Devices → TinySpot"
                 : AUTH[s.auth]);

@@ -1,0 +1,49 @@
+diff --git a/main/io/URLParser.cpp b/main/io/URLParser.cpp
+index 4a50ab1..bc68bb5 100644
+--- a/main/io/URLParser.cpp
++++ b/main/io/URLParser.cpp
+@@ -5,22 +5,24 @@ namespace bell {
+ #ifdef BELL_DISABLE_REGEX
+ void URLParser::parse(const char* url, std::vector<std::string>& match) {
+   match[0] = url;
+-  char scratch[512];
++  // %N specifiers below write N chars *plus* a NUL, so the buffer must be
++  // larger than the largest width; the schema scan had no width at all.
++  char scratch[1025];
+ 
+   /* Parsing the following (http|https://[host][/path][?query]#hash] as in regex 
+      * below. This needs to be changed if you update that regex */
+ 
+   // get the schema
+-  if (sscanf(url, "%[^:]:/", scratch) > 0)
++  if (sscanf(url, "%1024[^:]:/", scratch) > 0)
+     match[1] = scratch;
+ 
+   // get the host
+-  if (sscanf(url, "htt%*[^:]://%512[^/#?]", scratch) > 0)
++  if (sscanf(url, "htt%*[^:]://%1024[^/#?]", scratch) > 0)
+     match[2] = scratch;
+ 
+   // get the path
+   url = strstr(url, match[2].c_str()) + match[2].size();
+-  if (sscanf(url, "/%512[^?]", scratch) > 0)
++  if (sscanf(url, "/%1024[^?]", scratch) > 0)
+     match[3] = scratch;
+   else if (*url && *url != '?' && *url != '#')
+     url++;
+@@ -28,13 +30,13 @@ void URLParser::parse(const char* url, std::vector<std::string>& match) {
+   // get the query
+   if (match[3].size())
+     url += match[3].size() + 1;
+-  if (sscanf(url, "?%512[^#]", scratch) > 0)
++  if (sscanf(url, "?%1024[^#]", scratch) > 0)
+     match[4] = scratch;
+ 
+   // get the hash
+   if (match[4].size())
+     url += match[4].size() + 1;
+-  if (sscanf(url, "#%512s", scratch) > 0)
++  if (sscanf(url, "#%1024s", scratch) > 0)
+     match[5] = scratch;
+ 
+   // fix the acquired items

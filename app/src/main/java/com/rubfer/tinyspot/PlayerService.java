@@ -39,8 +39,23 @@ public class PlayerService extends Service implements NativePlayer.Listener {
         String artist = "";
         int durationMs;
         String error;
+        /** Playback position at positionUpdatedAt, extrapolated while playing. */
+        int positionMs;
+        long positionUpdatedAt;
         /** "uri\tname\n" lines, null until loaded. */
         String playlists;
+
+        int currentPositionMs() {
+            if (playback != 1) return positionMs;
+            long elapsed = android.os.SystemClock.elapsedRealtime() - positionUpdatedAt;
+            int pos = positionMs + (int) elapsed;
+            return durationMs > 0 ? Math.min(pos, durationMs) : pos;
+        }
+    }
+
+    /** Position now: the last reported one plus elapsed time while playing. */
+    static int currentPosition() {
+        return state.currentPositionMs();
     }
 
     interface UiListener {
@@ -58,6 +73,7 @@ public class PlayerService extends Service implements NativePlayer.Listener {
     private boolean nativeStarted;
     private Network boundNetwork;
     private MediaSessionManager media;
+    private int authRejections;
 
     static void setUiListener(UiListener l) {
         uiListener = l;
@@ -210,17 +226,34 @@ public class PlayerService extends Service implements NativePlayer.Listener {
         switch (type) {
             case NativePlayer.EV_AUTH_STATE:
                 state.auth = arg;
-                if (arg == 2 && state.playlists == null) NativePlayer.nativeRequestPlaylists();
-                if (arg == 3) prefs().edit().remove("credentials").apply();
+                if (arg == 2) {
+                    authRejections = 0;
+                    if (state.playlists == null) NativePlayer.nativeRequestPlaylists();
+                } else if (arg == 3 && ++authRejections >= 2) {
+                    // Only give up on the saved login after a second rejection:
+                    // one can happen without the credentials being revoked.
+                    Log.w(TAG, "second login rejection, dropping stored credentials");
+                    prefs().edit().remove("credentials").apply();
+                }
                 break;
             case NativePlayer.EV_PLAYBACK_STATE:
+                if (state.playback == 1 && arg != 1) {
+                    state.positionMs = state.currentPositionMs();  // freeze where we are
+                }
+                state.positionUpdatedAt = android.os.SystemClock.elapsedRealtime();
                 state.playback = arg;
+                break;
+            case NativePlayer.EV_POSITION:
+                state.positionMs = arg;
+                state.positionUpdatedAt = android.os.SystemClock.elapsedRealtime();
                 break;
             case NativePlayer.EV_TRACK_CHANGED: {
                 String[] f = text != null ? text.split("\n", -1) : new String[0];
                 state.title = f.length > 0 ? f[0] : "";
                 state.artist = f.length > 1 ? f[1] : "";
                 state.durationMs = arg;
+                state.positionMs = 0;
+                state.positionUpdatedAt = android.os.SystemClock.elapsedRealtime();
                 break;
             }
             case NativePlayer.EV_PLAYLISTS:

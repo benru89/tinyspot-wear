@@ -133,7 +133,7 @@ final class MediaSessionManager {
                         | PlaybackState.ACTION_SKIP_TO_NEXT
                         | PlaybackState.ACTION_SKIP_TO_PREVIOUS
                         | PlaybackState.ACTION_SEEK_TO | PlaybackState.ACTION_STOP)
-                .setState(state, PlaybackState.PLAYBACK_POSITION_UNKNOWN, 1.0f)
+                .setState(state, s.currentPositionMs(), s.playback == 1 ? 1.0f : 0f)
                 .build());
 
         session.setMetadata(new MediaMetadata.Builder()
