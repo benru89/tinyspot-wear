@@ -44,6 +44,8 @@ public class PlayerService extends Service implements NativePlayer.Listener {
         long positionUpdatedAt;
         /** "uri\tname\n" lines, null until loaded. */
         String playlists;
+        /** Playing, but the watch's media volume is muted or zero. */
+        boolean silent;
 
         int currentPositionMs() {
             if (playback != 1) return positionMs;
@@ -205,6 +207,19 @@ public class PlayerService extends Service implements NativePlayer.Listener {
         }
     }
 
+    /**
+     * Wear OS mutes STREAM_MUSIC on its own and keeps a separate volume per
+     * output, so Bluetooth can sit at 0 while the speaker is fine. Playing
+     * into a muted stream looks identical to playing, hence the warning.
+     */
+    private boolean isMediaSilent() {
+        android.media.AudioManager am =
+                (android.media.AudioManager) getSystemService(AUDIO_SERVICE);
+        if (am == null) return false;
+        return am.isStreamMute(android.media.AudioManager.STREAM_MUSIC)
+                || am.getStreamVolume(android.media.AudioManager.STREAM_MUSIC) == 0;
+    }
+
     private SharedPreferences prefs() {
         return getSharedPreferences("auth", MODE_PRIVATE);
     }
@@ -248,6 +263,7 @@ public class PlayerService extends Service implements NativePlayer.Listener {
                 }
                 break;
             case NativePlayer.EV_PLAYBACK_STATE:
+                state.silent = arg == 1 && isMediaSilent();
                 if (state.playback == 1 && arg != 1) {
                     state.positionMs = state.currentPositionMs();  // freeze where we are
                 }

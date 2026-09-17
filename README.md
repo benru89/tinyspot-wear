@@ -54,7 +54,7 @@ Known rough edges:
 | CPU idle, logged in, screen off | 0.1 % of one core |
 | CPU playing, screen off | 3.5-3.9 % of one core, measured over 3-5 min |
 | Wake locks | none held by the app |
-| Audio | 44.1 kHz s16 stereo, 4096-frame OpenSL ES buffers (~11 wakeups/s), 15 s ring buffer with 1.5 s prefill |
+| Audio | 44.1 kHz s16 stereo, 4096-frame OpenSL ES buffers (~11 wakeups/s), 15 s ring buffer with 1.5 s prefill, output at full scale |
 | Underruns | 0 in 5 min (was 41 in a comparable run with a 1 s buffer) |
 | Battery while playing | 26 % -> 19 % in 36 min, screen off, Wi-Fi = ~11.5 %/h, so roughly 8-9 h of playback per charge |
 | Continuous playback | 62/62 samples over 31 min, screen off, no interruption |
@@ -142,6 +142,12 @@ cspot's own debug level is dropped and its per-packet chatter filtered.
 ```sh
 adb logcat -v time TinySpot-Cspot:V TinySpot-Audio:V TinySpot-Java:V '*:S'
 ```
+
+**No sound?** Wear OS mutes `STREAM_MUSIC` by itself and keeps a separate
+volume per output, so Bluetooth can sit at 0 while the speaker is fine. The app
+says "Playing - volume is 0" when it notices. Check with
+`adb shell dumpsys audio | grep -A5 STREAM_MUSIC`, fix with
+`adb shell media volume --stream 3 --set 9`.
 
 Note: the watch's log buffer drops this app's lines under load; stream logcat
 to a file rather than using `logcat -d` after the fact.

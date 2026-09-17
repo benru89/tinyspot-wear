@@ -37,6 +37,7 @@ class AndroidAudioSink {
   size_t write(const uint8_t* pcm, size_t bytes, size_t trackKey);
   void setPlaying(bool playing);
   void flush();
+  // Unused by default: loudness is left to the system media volume.
   void setVolume(int volume0to65535);
 
  private:

@@ -310,7 +310,9 @@ void CspotPlayer::onSpircEvent(int type, int i, bool b, void* ti) {
       break;
     }
     case T::VOLUME:
-      sink.setVolume(i);
+      // Deliberately not applied to the output: cspot's volume state starts
+      // at 0, so a stray volume frame would silently mute us. Loudness is the
+      // watch's own media volume, as on any other Android media app.
       emit(Event::VOLUME, i);
       break;
   }
@@ -465,7 +467,7 @@ void CspotPlayer::seek(int ms) {
   }
 }
 void CspotPlayer::setVolume(int v) {
-  sink.setVolume(v);
+  // Reported to Spotify only; see the VOLUME event above.
   if (auto h = currentHandler()) h->setRemoteVolume(v);
 }
 

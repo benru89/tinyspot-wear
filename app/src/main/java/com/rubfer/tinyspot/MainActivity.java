@@ -112,7 +112,7 @@ public class MainActivity extends Activity implements PlayerService.UiListener {
         spotify.setText(s.auth == 0 && s.error == null
                 ? "Open Spotify → Devices → TinySpot"
                 : AUTH[s.auth]);
-        player.setText(PLAYBACK[s.playback]);
+        player.setText(s.silent ? "Playing – volume is 0" : PLAYBACK[s.playback]);
         track.setText(s.title.isEmpty() ? "—" : s.artist + " – " + s.title);
         track.setVisibility(s.auth == 2 ? View.VISIBLE : View.INVISIBLE);
         playPause.setImageResource(s.playback == 1
